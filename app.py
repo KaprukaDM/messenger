@@ -1,47 +1,68 @@
-from flask import Flask, request
+import os
 import requests
+from flask import Flask, request
 
 app = Flask(__name__)
 
-PAGE_ACCESS_TOKEN = "your_page_access_token_here"  # Replace this
-VERIFY_TOKEN = "my_verify_token_123"
+VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN")
+PAGE_ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN")
+GRAPH_API_VERSION = os.environ.get("GRAPH_API_VERSION", "v18.0")
 
-@app.route('/webhook', methods=['GET'])
-def verify_webhook():
-    token = request.args.get('hub.verify_token')
-    challenge = request.args.get('hub.challenge')
-    if token == VERIFY_TOKEN:
-        return challenge
-    return 'Invalid verification token', 403
 
-@app.route('/webhook', methods=['POST'])
+@app.route("/", methods=["GET"])
+def health():
+    return "OK", 200
+
+
+@app.route("/webhook", methods=["GET", "POST"])
 def webhook():
-    data = request.get_json()
-    print("MESSAGE RECEIVED:", data)
-    
-    if data.get('object') == 'page':
-        for entry in data.get('entry', []):
-            for messaging_event in entry.get('messaging', []):
-                sender_id = messaging_event['sender']['id']
-                
-                if 'message' in messaging_event:
-                    message_text = messaging_event['message'].get('text', '')
-                    print(f"From: {sender_id}, Text: {message_text}")
-                    
-                    # Send reply
-                    send_message(sender_id, f"You said: {message_text}")
-    
-    return 'OK', 200
+    if request.method == "GET":
+        # Webhook verification (Meta -> your server)
+        mode = request.args.get("hub.mode")
+        token = request.args.get("hub.verify_token")
+        challenge = request.args.get("hub.challenge")
 
-def send_message(recipient_id, message_text):
-    url = f"https://graph.facebook.com/v21.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
-    data = {
-        "recipient": {"id": recipient_id},
-        "message": {"text": message_text}
+        if mode == "subscribe" and token == VERIFY_TOKEN:
+            return challenge, 200
+        return "Forbidden", 403
+
+    if request.method == "POST":
+        # Incoming messages/events (Meta -> your server)
+        data = request.get_json()
+        print("Webhook payload:", data, flush=True)
+
+        if "entry" in data:
+            for entry in data["entry"]:
+                messaging_events = entry.get("messaging", [])
+                for event in messaging_events:
+                    if event.get("message") and "text" in event["message"]:
+                        sender_id = event["sender"]["id"]
+                        text = event["message"]["text"]
+                        print(f"Message from {sender_id}: {text}", flush=True)
+
+                        reply_text = f"You said: {text}"
+                        send_message(sender_id, reply_text)
+
+        return "EVENT_RECEIVED", 200
+
+
+def send_message(recipient_id: str, text: str):
+    if not PAGE_ACCESS_TOKEN:
+        print("PAGE_ACCESS_TOKEN missing", flush=True)
+        return
+
+    url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/me/messages"
+    params = {
+        "access_token": PAGE_ACCESS_TOKEN
     }
-    response = requests.post(url, json=data)
-    print("Reply sent:", response.status_code)
-    return response
+    payload = {
+        "recipient": {"id": recipient_id},
+        "message": {"text": text}
+    }
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)
+    r = requests.post(url, params=params, json=payload)
+    print("Send message status:", r.status_code, r.text, flush=True)
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
