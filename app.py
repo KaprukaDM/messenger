@@ -9,30 +9,43 @@ PAGE_ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN")
 GRAPH_API_VERSION = os.environ.get("GRAPH_API_VERSION", "v24.0")
 
 
-@app.route("/", methods=["GET"])
+@app.route("/", methods=["GET", "POST"])
 def health():
+    if request.method == "GET" and request.args.get("hub.mode"):
+        # Handle verification at root path
+        mode = request.args.get("hub.mode")
+        token = request.args.get("hub.verify_token")
+        challenge = request.args.get("hub.challenge")
+        
+        print(f"ROOT VERIFY: mode={mode}, token={token}, challenge={challenge}, VERIFY_TOKEN={VERIFY_TOKEN}", flush=True)
+        
+        if mode == "subscribe" and token == VERIFY_TOKEN:
+            print("ROOT verification successful", flush=True)
+            return challenge, 200
+        
+        print("ROOT verification failed", flush=True)
+        return "Forbidden", 403
+    
     return "OK", 200
 
 
 @app.route("/webhook", methods=["GET", "POST"])
 def webhook():
     if request.method == "GET":
-        # Webhook verification
         mode = request.args.get("hub.mode")
         token = request.args.get("hub.verify_token")
         challenge = request.args.get("hub.challenge")
 
-        print(f"VERIFY DEBUG: mode={mode}, token={token}, challenge={challenge}, VERIFY_TOKEN={VERIFY_TOKEN}", flush=True)
+        print(f"WEBHOOK VERIFY: mode={mode}, token={token}, challenge={challenge}, VERIFY_TOKEN={VERIFY_TOKEN}", flush=True)
 
         if mode == "subscribe" and token == VERIFY_TOKEN:
-            print("Verification successful", flush=True)
+            print("Webhook verification successful", flush=True)
             return challenge, 200
         
-        print("Verification failed", flush=True)
+        print("Webhook verification failed", flush=True)
         return "Forbidden", 403
 
     if request.method == "POST":
-        # Incoming messages
         data = request.get_json()
         print("Webhook payload:", data, flush=True)
 
