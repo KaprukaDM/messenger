@@ -100,10 +100,24 @@ def webhook():
                         # Save user message
                         save_message(sender_id, "user", text)
                         
-                        # Get conversation history + product context
+                        # Get conversation history
                         history = get_conversation_history(sender_id)
+                        
+                        # Get ad_id if exists
                         ad_id = get_user_ad(sender_id)
-                        products_context = get_products_by_ad(ad_id) if ad_id else ""
+                        
+                        # Get products context
+                        if ad_id:
+                            # User came from ad - show specific ad products
+                            products_context = get_products_by_ad(ad_id)
+                            print(f"Loaded products for ad {ad_id}", flush=True)
+                        else:
+                            # Organic user - search products based on query
+                            products_context = search_products_by_query(text)
+                            if products_context:
+                                print(f"Found products matching query: {text}", flush=True)
+                            else:
+                                print("No products found, using general knowledge", flush=True)
                         
                         # Generate AI response with context
                         reply_text = get_ai_response(text, history, products_context, sender_id)
@@ -142,7 +156,7 @@ def get_user_ad(sender_id):
 
 
 def get_products_by_ad(ad_id):
-    """Get products from the ad (supports up to 5 products)"""
+    """Get products from specific ad (for users from Click-to-Messenger)"""
     try:
         records = ad_products_sheet.get_all_records()
         
@@ -154,7 +168,7 @@ def get_products_by_ad(ad_id):
                 # Loop through products 1-5
                 for i in range(1, 6):
                     name = record.get(f"product_{i}_name", "").strip()
-                    if name:  # Only include if product exists
+                    if name:
                         price = record.get(f"product_{i}_price", "")
                         details = record.get(f"product_{i}_details", "")
                         products_text += f"{i}. {name}\n"
@@ -163,8 +177,97 @@ def get_products_by_ad(ad_id):
                 
                 return products_text
     except Exception as e:
-        print(f"Error getting products: {e}", flush=True)
+        print(f"Error getting products by ad: {e}", flush=True)
     return ""
+
+
+def search_products_by_query(user_query):
+    """Search products using AI to understand intent (for organic users)"""
+    try:
+        # Step 1: Use AI to extract search keywords from user query
+        search_keywords = extract_search_keywords(user_query)
+        
+        if not search_keywords:
+            return ""
+        
+        print(f"AI extracted keywords: {search_keywords}", flush=True)
+        
+        # Step 2: Search products in sheet
+        records = ad_products_sheet.get_all_records()
+        matched_products = []
+        
+        for record in records:
+            # Search in product_list and individual product names
+            searchable_text = f"{record.get('product_list', '')} "
+            
+            for i in range(1, 6):
+                name = record.get(f"product_{i}_name", "")
+                details = record.get(f"product_{i}_details", "")
+                searchable_text += f"{name} {details} "
+            
+            # Check if any keyword matches
+            searchable_text_lower = searchable_text.lower()
+            if any(keyword.lower() in searchable_text_lower for keyword in search_keywords):
+                # Add all products from this ad
+                for i in range(1, 6):
+                    name = record.get(f"product_{i}_name", "").strip()
+                    if name:
+                        price = record.get(f"product_{i}_price", "")
+                        details = record.get(f"product_{i}_details", "")
+                        matched_products.append({
+                            "name": name,
+                            "price": price,
+                            "details": details
+                        })
+        
+        # Step 3: Format matched products
+        if matched_products:
+            products_text = "Available products matching your query:\n\n"
+            for idx, product in enumerate(matched_products[:5], 1):  # Limit to 5 products
+                products_text += f"{idx}. {product['name']}\n"
+                products_text += f"   Price: {product['price']}\n"
+                products_text += f"   Details: {product['details']}\n\n"
+            return products_text
+        
+    except Exception as e:
+        print(f"Error searching products: {e}", flush=True)
+    
+    return ""
+
+
+def extract_search_keywords(user_query):
+    """Use AI to extract product search keywords from user query"""
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": """You are a product search assistant. Extract key product-related keywords from the user's query.
+Return ONLY the product keywords as a comma-separated list, nothing else.
+Examples:
+- "I need something to cook rice" → rice cooker
+- "What can keep food fresh?" → fridge, refrigerator
+- "Show me kitchen items" → kitchen appliances
+- "Do you have rice cookers?" → rice cooker
+- "Looking for a washing machine" → washing machine, washer
+If no product intent found, return "none"."""},
+                {"role": "user", "content": user_query}
+            ],
+            max_tokens=50,
+            temperature=0.3
+        )
+        
+        keywords_text = response.choices[0].message.content.strip()
+        
+        if keywords_text.lower() == "none":
+            return []
+        
+        # Split by comma and clean
+        keywords = [k.strip() for k in keywords_text.split(",")]
+        return keywords
+        
+    except Exception as e:
+        print(f"Error extracting keywords: {e}", flush=True)
+        return []
 
 
 def save_message(sender_id, role, message):
@@ -305,7 +408,7 @@ def get_ai_response(user_message, history, product_context, sender_id):
         )
         
         # Build system prompt
-        system_prompt = """You are a helpful sales assistant for our Facebook ads. 
+        system_prompt = """You are a helpful sales assistant for our Facebook page. 
 Be friendly, concise, and helpful. Answer questions about products clearly.
 If someone wants to buy, ask for their phone number or email.
 Keep responses under 3 sentences unless detailed explanation is needed."""
