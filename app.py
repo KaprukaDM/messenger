@@ -37,7 +37,7 @@ if PAGE_ID_3 and PAGE_ACCESS_TOKEN_3:
 # Initialize OpenAI
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# User conversation state tracking (in-memory)
+# User conversation state tracking
 user_states = {}
 
 
@@ -167,7 +167,16 @@ def handle_message(sender_id, text, page_token):
             handle_direct_order(sender_id, text, page_token, ad_id)
             return
 
-        # Delivery question
+        # FIX: Don't restart flow if already in a flow and asking about delivery
+        # Check if user is asking about COD/payment method
+        is_cod_question = detect_cod_question(text)
+        if is_cod_question:
+            # Answer COD question WITHOUT breaking flow
+            if sender_id in user_states:
+                answer_question_in_flow(sender_id, text, page_token, language, ad_id)
+                return
+        
+        # Delivery question - only restart if NOT in flow
         is_delivery_question = detect_delivery_question(text)
         if is_delivery_question and sender_id not in user_states:
             products_context, _ = get_products_for_ad(ad_id) if ad_id else (None, [])
@@ -210,13 +219,29 @@ def detect_direct_order_intent(text):
     return any(keyword in text_lower for keyword in direct_order_keywords)
 
 
-def detect_delivery_question(text):
-    delivery_keywords = [
-        "delivery", "delivery kiyada", "delivery charge", "යවන්නේ",
-        "කොහොමද යවන්නේ", "dawas", "dawas kiyak", "kiyak yanawada",
-        "wenawada", "days", "කීයක්", "delivery ekak",
+def detect_cod_question(text):
+    """Detect if asking about cash on delivery / payment method"""
+    cod_keywords = [
+        "cash on delivery", "cod", "cash", "කාඩ් පතක්", "card", 
+        "payment", "pay", "ගෙවන්නේ", "paysanna", "cash thiyanawada",
+        "cod thiyanawada", "කෑෂ්"
     ]
     text_lower = text.lower()
+    return any(keyword in text_lower for keyword in cod_keywords)
+
+
+def detect_delivery_question(text):
+    """Detect delivery timing/charge questions - NOT payment questions"""
+    # Don't include 'delivery' alone as it matches 'cash on delivery'
+    delivery_keywords = [
+        "delivery kiyada", "delivery charge", "යවන්නේ",
+        "කොහොමද යවන්නේ", "dawas", "dawas kiyak", "kiyak yanawada",
+        "wenawada", "days", "කීයක්", "delivery ekak", "delivery fee"
+    ]
+    text_lower = text.lower()
+    # Exclude if it's about COD
+    if detect_cod_question(text):
+        return False
     return any(keyword in text_lower for keyword in delivery_keywords)
 
 
@@ -225,7 +250,7 @@ def detect_question(text):
         "?", "thiyanawada", "thiyenawada", "mokakda", "kohomada",
         "kiyada", "what", "how", "when", "කොහොමද", "මොකක්ද",
         "තියෙනවද", "කීයද", "වර්ණ", "color", "size", "wena",
-        "monawada", "mokada", "kiyadha", "total", "mona",
+        "monawada", "mokada", "kiyadha", "total", "mona", "visthara"
     ]
     text_lower = text.lower()
     if detect_delivery_question(text):
@@ -256,6 +281,7 @@ def handle_direct_order(sender_id, text, page_token, ad_id):
 
 
 def answer_question_in_flow(sender_id, text, page_token, language, ad_id):
+    """Answer question while maintaining flow"""
     state = user_states[sender_id]
     products_context = state.get("product")
     history = get_conversation_history(sender_id, limit=8)
@@ -265,45 +291,40 @@ def answer_question_in_flow(sender_id, text, page_token, language, ad_id):
     save_message(sender_id, ad_id, "assistant", reply)
 
     step = state.get("step")
-    if step not in ["collect_details", "collect_details_direct"]:
-        if step in ["ask_location", "ask_location_for_delivery"]:
-            follow_up = "Location eka kohada? 😊\n\nDear 💙"
-        elif step == "confirm_delivery":
-            follow_up = "Delivery charge Rs.350 ok neda?\n\nDear 💙"
-        elif step == "ask_order":
-            follow_up = "Order karanna kamathi dha?\n\nDear 💙"
-        else:
-            return
-        send_message(sender_id, follow_up, page_token)
-        save_message(sender_id, ad_id, "assistant", follow_up)
+    # DON'T follow up if in details collection OR if question was about order/COD
+    if step in ["collect_details", "collect_details_direct"]:
+        return
+    
+    # Don't interrupt if they said "ok" to delivery charge - they're about to get order question
+    if step == "confirm_delivery":
+        return
+    
+    # Continue flow with appropriate follow-up
+    if step in ["ask_location", "ask_location_for_delivery"]:
+        follow_up = "Location eka kohada? 😊\n\nDear 💙"
+    elif step == "ask_order":
+        follow_up = "Order karanna kamathi dha?\n\nDear 💙"
+    else:
+        return
+    
+    send_message(sender_id, follow_up, page_token)
+    save_message(sender_id, ad_id, "assistant", follow_up)
 
 
 def handle_conversation_flow(sender_id, text, page_token, language):
+    """Step-by-step flow"""
     state = user_states[sender_id]
     step = state.get("step")
     ad_id = state.get("ad_id")
 
     if step in ["ask_location", "ask_location_for_delivery"]:
         state["location"] = text
-        state["step"] = "confirm_delivery"
+        state["step"] = "ask_order"  # FIX: Go straight to order question
 
-        delivery_msg = "Hari! Delivery charge eka Rs.350 yi. Eka ok neda?\n\nDear 💙"
-        send_message(sender_id, delivery_msg, page_token)
-        save_message(sender_id, ad_id, "assistant", delivery_msg)
-
-    elif step == "confirm_delivery":
-        agrees = check_agreement(text)
-
-        if agrees:
-            state["step"] = "ask_order"
-            order_msg = "Order karanna kamathi dha?\n\nDear 💙"
-            send_message(sender_id, order_msg, page_token)
-            save_message(sender_id, ad_id, "assistant", order_msg)
-        else:
-            goodbye_msg = "Hari dear, awashya welawaka mata call karanna!\n\nDear 💙"
-            send_message(sender_id, goodbye_msg, page_token)
-            save_message(sender_id, ad_id, "assistant", goodbye_msg)
-            del user_states[sender_id]
+        # FIX: Tell delivery charge Rs.350 AND ask for order in one message
+        combined_msg = "Hari! Delivery charge eka Rs.350 yi. Order karanna kamathi dha?\n\nDear 💙"
+        send_message(sender_id, combined_msg, page_token)
+        save_message(sender_id, ad_id, "assistant", combined_msg)
 
     elif step == "ask_order":
         wants_order = check_agreement(text)
@@ -357,6 +378,7 @@ def handle_conversation_flow(sender_id, text, page_token, language):
 
 
 def handle_regular_conversation(sender_id, text, page_token, language, ad_id):
+    """Handle regular conversations (non-flow)"""
     wants_photos = detect_photo_request(text)
     history = get_conversation_history(sender_id, limit=10)
 
@@ -547,9 +569,8 @@ def detect_photo_request(text):
 # =========================
 
 def get_ai_response(user_message, history, products_context, language):
-    """Generate AI response - short, natural Singlish, handle 'mona products' properly"""
+    """Generate AI response - FIXED to handle 'mona products' and COD questions"""
     try:
-        # When NO products at all for this conversation
         if not products_context:
             system_prompt = """
 You are a friendly sales assistant. Respond in CASUAL SINGLISH.
@@ -557,29 +578,34 @@ You are a friendly sales assistant. Respond in CASUAL SINGLISH.
 No products list is available for this conversation.
 
 Rules:
-1. If user asks "mona products" / "mona products dha thiyanai", tell them politely that product list is not available now.
-2. Example first reply: "Product list eka denna ba dear, awashya welawaka contact karanna."
-3. If they ask again, change the wording. DON'T repeat the exact same sentence.
-4. For other questions, answer briefly and friendly.
-5. Very short (1–2 sentences), end every message with "Dear 💙".
+1. If user asks "mona products" / "mona products dha thiyanai", tell them politely product list is not available.
+2. Example: "Product list eka denna ba dear, awashya welawaka contact karanna."
+3. Very short (1–2 sentences), end with "Dear 💙".
 """
         else:
-            # Normal mode with products
             system_prompt = """
 You are a friendly sales assistant. Respond in CASUAL SINGLISH.
 
-CRITICAL RULES:
-1. ONLY mention products that are in the Products list below.
-2. If user asks "mona products dha thiyanai" or "mona products", that means "What products do you have?" → list the products from the Products list.
-3. If user asks about a product NOT in the list, say once: "Eka nehe dear", then suggest what you have.
-4. Very short (1–2 sentences max).
-5. Natural Singlish: "ow", "thiyanawa", "kiyada", "mehenna", "kamathi dha".
-6. ALWAYS use EXACT prices from Products list.
-7. Delivery: Rs.350, 3–5 working days.
-8. Try NOT to repeat the exact same sentence if user asks again.
-9. End every message with "Dear 💙".
+CRITICAL RULES FOR "MONA PRODUCTS":
+1. If user asks "mona products" / "mona products dha thiyanai" / "mata visthara denna", that means "What products do you have?" or "Give me details".
+2. Response: List the products from Products section below. Example: "Mehenna ape products:\n\n[list all products with prices]"
+3. DON'T say "eka nehe dear" for "mona products" questions.
+
+PAYMENT QUESTIONS:
+4. If user asks "cash on delivery thiyanawada" / "COD" / "payment", answer: "Ow dear, cash on delivery thiyanawa! Rs.350 delivery charge ekata COD ekath puluwan."
+5. Always confirm COD is available.
+
+OTHER RULES:
+6. ONLY mention products in the Products list.
+7. ALWAYS use EXACT prices from Products list.
+8. Delivery: Rs.350, 3–5 working days.
+9. Very short (1–2 sentences max).
+10. Natural Singlish: "ow", "thiyanawa", "kamathi dha", "mehenna".
+11. End with "Dear 💙".
+
+Products (ONLY these exist):
 """
-            system_prompt += f"\nProducts (ONLY these exist):\n{products_context}"
+            system_prompt += f"\n{products_context}"
 
         messages = [{"role": "system", "content": system_prompt}]
 
@@ -591,8 +617,8 @@ CRITICAL RULES:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages,
-            max_tokens=80,
-            temperature=0.8,  # a bit higher for variety
+            max_tokens=120,  # Increased for product lists
+            temperature=0.7,
         )
 
         reply = response.choices[0].message.content.strip()
@@ -608,7 +634,7 @@ CRITICAL RULES:
 
 
 def get_products_for_ad(ad_id):
-    """Get products + all images for a given ad_id from sheet"""
+    """Get products + all images for a given ad_id"""
     try:
         sheet = get_sheet()
         if not sheet:
@@ -669,7 +695,7 @@ def send_image(recipient_id, image_url, page_token):
 
 
 def search_products_by_query(query):
-    """Search products in sheet using AI-extracted keywords"""
+    """Search products using AI keywords"""
     try:
         keyword_response = client.chat.completions.create(
             model="gpt-4o-mini",
