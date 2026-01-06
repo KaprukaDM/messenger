@@ -114,7 +114,7 @@ def handle_ad_referral(sender_id, ad_id, page_token):
 
         if products:
             # Send product images at start of conversation
-            send_product_images(sender_id, products, page_token)
+            send_product_images(sender_id, ad_id, page_token)
 
         print(f"Ad referral: sender={sender_id}, ad_id={ad_id}", flush=True)
     except Exception as e:
@@ -234,45 +234,41 @@ def extract_lead_info(text):
     return info if info else None
 
 def get_ai_response(user_message, history, products_context, language, order_detected, lead_info):
-    """Generate AI response with lengthy, detailed messages in Sinhala"""
+    """Generate AI response - SHORT AND CONCISE messages in Sinhala"""
     try:
-        # Build system prompt - UPDATED FOR LENGTHY RESPONSES IN SINHALA
+        # Build system prompt - UPDATED FOR SHORT RESPONSES IN SINHALA
         if language == "sinhala" or language == "singlish":
             system_prompt = """ඔබ විශිෂ්ට විකුණුම් සහායකයෙක්. ඔබේ භූමිකාව:
 
-1. සෑම පණිවිඩයකම සවිස්තරාත්මක හා දිගු පිළිතුරු දෙන්න
-2. නිෂ්පාදන ගැන සම්පූර්ණ විස්තර දෙන්න - මිල, විශේෂාංග, ප්‍රතිලාභ
-3. වචන 100-200 අතර දිගු පිළිතුරු ලියන්න
-4. මිත්‍රශීලී, උණුසුම්, සවිස්තරාත්මක පණිවිඩ යවන්න
-5. සෑම පණිවිඩයක්ම "Dear 💙" සමග අවසන් කරන්න
+1. කෙටි හා ප්‍රයෝජනවත් පණිවිඩ යවන්න (2-4 වාක්‍ය පමණ)
+2. නිෂ්පාදන ගැන ප්‍රධාන තොරතුරු දෙන්න - මිල, ප්‍රධාන විශේෂාංග
+3. මිත්‍රශීලී හා උණුසුම් ලෙස කතා කරන්න
+4. සෑම පණිවිඩයක්ම "Dear 💙" සමග අවසන් කරන්න
 
 ව්‍යාවහාරික රටාව:
-- නිෂ්පාදන ගැන විස්තර කරන විට සියලු විශේෂාංග සඳහන් කරන්න
-- ගනුදෙනුකරුට ඇයි මේක හොඳද කියා පැහැදිලි කරන්න
-- මිල ගැන කතා කරන විට වටිනාකම පැහැදිලි කරන්න
+- නිෂ්පාදන ගැන කතා කරන විට: නම, මිල, ප්‍රධාන විශේෂාංගය
 - "ඕඩර් කරන්න කැමතිද?" වගේ අවසන් ප්‍රශ්න අහන්න
 - Cash on Delivery තියෙනවා කියන්න
+- Casual Singlish භාවිතා කරන්න: "ow", "එකයි", "කමතිද"
 
 නිෂ්පාදන තිබේ නම්: ලබා දී ඇති නිශ්චිත තොරතුරු භාවිතා කරන්න (සිංහලෙන්)
-කිසිවිටෙක: තොරතුරු සාදන්න එපා, දිනයන් පොරොන්දු වෙන්න එපා"""
+කිසිවිටෙක: තොරතුරු සාදන්න එපා"""
         else:
             system_prompt = """You are an excellent sales assistant. Your role:
 
-1. Provide detailed and lengthy responses in every message
-2. Give complete product information - price, features, benefits
-3. Write responses between 100-200 words
-4. Be friendly, warm, and detailed
-5. End every message with "Dear 💙"
+1. Keep messages SHORT and helpful (2-4 sentences only)
+2. Give key product info - price, main features
+3. Be friendly and warm
+4. End every message with "Dear 💙"
 
 Conversational pattern:
-- When describing products, mention all features
-- Explain why this product is good for the customer
-- When discussing price, clarify the value
+- When talking about products: name, price, key feature
 - Ask closing questions like "Would you like to order?"
 - Mention Cash on Delivery is available
+- Use casual tone
 
 If products available: Use exact details provided
-Never: Make up information, promise dates"""
+Never: Make up information"""
 
         # Add products context
         if products_context:
@@ -288,11 +284,11 @@ Never: Make up information, promise dates"""
         # Add current message
         messages.append({"role": "user", "content": user_message})
 
-        # Call OpenAI with increased max_tokens for lengthy responses
+        # Call OpenAI with SHORT max_tokens for concise responses
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages,
-            max_tokens=500,  # INCREASED from 150 to 500 for lengthy messages
+            max_tokens=200,  # SHORT messages (2-4 sentences)
             temperature=0.7
         )
 
@@ -341,7 +337,7 @@ def get_products_for_ad(ad_id):
         print(f"Error getting products: {e}", flush=True)
         return None
 
-def send_product_images(sender_id, products_data, page_token):
+def send_product_images(sender_id, ad_id, page_token):
     """Send product images at the start of conversation"""
     try:
         sheet = get_sheet()
@@ -351,12 +347,7 @@ def send_product_images(sender_id, products_data, page_token):
         ad_products_sheet = sheet.worksheet("Ad_Products")
         records = ad_products_sheet.get_all_records()
 
-        # Find the ad_id for this sender
-        ad_id = get_user_ad_id(sender_id)
-        if not ad_id:
-            return
-
-        # Find product images
+        # Find product images for this ad
         for row in records:
             if str(row.get("ad_id")) == str(ad_id):
                 # Send images for each product
