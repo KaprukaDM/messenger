@@ -72,13 +72,14 @@ def get_user_context(sender_id):
             "step": None,
             "ad_id": None,
             "product": None,
-            "product_name": None,  # NEW: Remember specific product
+            "product_name": None,
             "location": None,
             "phone": None,
             "name": None,
-            "last_topic": None,  # NEW: Track conversation topic
-            "asked_location": False,  # NEW: Track if already asked
-            "asked_order": False,  # NEW: Track if already asked
+            "last_topic": None,
+            "asked_location": False,
+            "asked_order": False,
+            "order_retry_count": 0,
         }
     return user_states[sender_id]
 
@@ -88,7 +89,7 @@ def update_user_context(sender_id, **kwargs):
     context = get_user_context(sender_id)
     context.update(kwargs)
     user_states[sender_id] = context
-    print(f"💾 Updated context for {sender_id}: {context}", flush=True)
+    print(f"💾 Updated context: step={context.get('step')}, product={context.get('product_name')}", flush=True)
 
 
 def extract_context_from_history(sender_id):
@@ -96,7 +97,6 @@ def extract_context_from_history(sender_id):
     history = get_conversation_history(sender_id, limit=10)
     context = get_user_context(sender_id)
     
-    # Look for product mentions
     for msg in reversed(history):
         if msg["role"] == "user":
             product = extract_product_from_query(msg["message"])
@@ -104,7 +104,6 @@ def extract_context_from_history(sender_id):
                 update_user_context(sender_id, product_name=product, last_topic=product)
                 break
     
-    # Look for location mentions
     for msg in reversed(history):
         if msg["role"] == "user":
             if is_valid_location(msg["message"]) and not context.get("location"):
@@ -158,12 +157,10 @@ def webhook():
                 for event in messaging_events:
                     sender_id = event["sender"]["id"]
 
-                    # Handle referral (ad tracking)
                     if "referral" in event:
                         ad_id = event["referral"].get("ref")
                         handle_ad_referral(sender_id, ad_id, page_token)
 
-                    # Handle messages
                     if event.get("message") and "text" in event["message"]:
                         text = event["message"]["text"]
                         print(f"Message from {sender_id}: {text}", flush=True)
@@ -183,16 +180,13 @@ def handle_ad_referral(sender_id, ad_id, page_token):
 
         products_context, product_images = get_products_for_ad(ad_id)
 
-        # Initialize context
         update_user_context(sender_id, step="ask_location", ad_id=ad_id, product=products_context)
 
-        # Send product list
         if products_context:
             product_message = f"Mehenna ape products:\n\n{products_context}"
             send_message(sender_id, product_message, page_token)
             save_message(sender_id, ad_id, "assistant", product_message)
 
-        # Send images (up to 10)
         if product_images:
             for img_url in product_images[:10]:
                 send_image(sender_id, img_url, page_token)
@@ -212,46 +206,68 @@ def handle_ad_referral(sender_id, ad_id, page_token):
 def handle_message(sender_id, text, page_token):
     """Main message handler with FULL CONTEXT AWARENESS"""
     try:
-        # Load user context
         context = get_user_context(sender_id)
         ad_id = context.get("ad_id") or get_user_ad_id(sender_id)
         
         save_message(sender_id, ad_id, "user", text)
 
-        # Get products
         products_context, product_images = get_products_for_ad(ad_id) if ad_id else (None, [])
         
         if not products_context:
             products_context, product_images = search_products_by_query(text)
             print(f"Searched products, found: {bool(products_context)}", flush=True)
         
-        # Extract context from history if needed
         if not context.get("product_name"):
             extract_context_from_history(sender_id)
-            context = get_user_context(sender_id)  # Reload
+            context = get_user_context(sender_id)
         
-        # Update context with current message
         current_product = extract_product_from_query(text)
         if current_product:
             update_user_context(sender_id, product_name=current_product, last_topic=current_product)
         
-        # Check for location in message
         if is_valid_location(text) and not context.get("location"):
             update_user_context(sender_id, location=text)
             print(f"📍 Saved location: {text}", flush=True)
         
-        # Get history
         history = get_conversation_history(sender_id, limit=30)
         
-        # Check if user is sending complete contact details
         if detect_contact_details(text):
             handle_contact_details(sender_id, text, page_token, ad_id, products_context)
             return
 
-        # Flow management with context awareness
+        # INTENT DETECTION - CHECK FIRST BEFORE FLOW
+        intent = detect_intent(text, history)
+        print(f"🎯 Intent: {intent}, Step: {context.get('step')}", flush=True)
+
+        # Handle specific intents BEFORE flow - CLEAR STUCK STATES
+        if intent == "product_availability":
+            update_user_context(sender_id, step=None, order_retry_count=0)
+            handle_availability_request(sender_id, text, products_context, product_images, page_token, ad_id, context)
+            return
+        elif intent == "photos":
+            update_user_context(sender_id, step=None, order_retry_count=0)
+            handle_photo_request(sender_id, text, products_context, product_images, page_token, ad_id, context)
+            return
+        elif intent == "delivery":
+            update_user_context(sender_id, step=None, order_retry_count=0)
+            handle_delivery_request(sender_id, page_token, ad_id, context)
+            return
+        elif intent == "details":
+            update_user_context(sender_id, step=None, order_retry_count=0)
+            handle_details_request(sender_id, text, products_context, product_images, page_token, ad_id, context)
+            return
+        elif intent == "height":
+            update_user_context(sender_id, step=None, order_retry_count=0)
+            handle_height_request(sender_id, text, products_context, page_token, ad_id, context)
+            return
+        elif intent == "how_to_order":
+            update_user_context(sender_id, step=None, order_retry_count=0)
+            handle_how_to_order(sender_id, page_token, ad_id)
+            return
+
+        # Flow management
         step = context.get("step")
         
-        # Location step
         if step == "ask_location":
             if is_valid_location(text):
                 update_user_context(sender_id, location=text, step="ask_order")
@@ -268,61 +284,56 @@ def handle_message(sender_id, text, page_token):
                 
                 update_user_context(sender_id, asked_order=True)
                 return
+            else:
+                update_user_context(sender_id, step=None)
         
-        # Order confirmation step
         elif step == "ask_order":
             wants_order = check_agreement(text)
             
+            # User asking NEW question instead of answering
+            if "thiyanawada" in text.lower() or "thiyanawadha" in text.lower():
+                update_user_context(sender_id, step=None, order_retry_count=0)
+                handle_availability_request(sender_id, text, products_context, product_images, page_token, ad_id, context)
+                return
+            
             if wants_order:
-                update_user_context(sender_id, step="collect_details")
+                update_user_context(sender_id, step="collect_details", order_retry_count=0)
                 details_msg = "Super! Name, address, phone ewanna.\n\nDear 💙"
                 send_message(sender_id, details_msg, page_token)
                 save_message(sender_id, ad_id, "assistant", details_msg)
                 return
             else:
+                retry_count = context.get("order_retry_count", 0)
+                
+                if retry_count >= 2:
+                    print(f"⚠️ Too many retries, clearing state", flush=True)
+                    update_user_context(sender_id, step=None, order_retry_count=0)
+                    
+                    msg = "Mata message karanna dear, help karannam!\n\nDear 💙"
+                    send_message(sender_id, msg, page_token)
+                    save_message(sender_id, ad_id, "assistant", msg)
+                    return
+                
+                update_user_context(sender_id, order_retry_count=retry_count + 1)
                 retry_msg = "Prashna thiyanawada dear? Mata kiyanna.\n\nDear 💙"
                 send_message(sender_id, retry_msg, page_token)
                 save_message(sender_id, ad_id, "assistant", retry_msg)
                 return
         
-        # Collecting details
         elif step == "collect_details":
             lead_info = extract_full_lead_info(text)
             if lead_info.get("phone"):
                 handle_contact_details(sender_id, text, page_token, ad_id, products_context)
                 return
 
-        # INTENT DETECTION
-        intent = detect_intent(text, history)
-        print(f"🎯 Intent: {intent}, Context: product={context.get('product_name')}, location={context.get('location')}", flush=True)
-
-        # Handle specific intents with context
-        if intent == "photos":
-            handle_photo_request(sender_id, text, products_context, product_images, page_token, ad_id, context)
-            return
-        elif intent == "delivery":
-            handle_delivery_request(sender_id, page_token, ad_id, context)
-            return
-        elif intent == "details":
-            handle_details_request(sender_id, text, products_context, product_images, page_token, ad_id, context)
-            return
-        elif intent == "height":
-            handle_height_request(sender_id, text, products_context, page_token, ad_id, context)
-            return
-        elif intent == "how_to_order":
-            handle_how_to_order(sender_id, page_token, ad_id)
-            return
-
-        # Use AI for natural conversation
+        # Use AI for general conversation
         reply = get_ai_response(text, history, products_context, product_images, sender_id, ad_id, context)
         
-        # Validation
         validation_result = validate_reply_strict(reply, products_context, text)
         if not validation_result["valid"]:
             print(f"❌ Invalid reply: {validation_result['reason']}", flush=True)
             reply = get_fallback_response(text, products_context, intent)
         
-        # Handle special commands
         if "SEND_IMAGES" in reply:
             reply = reply.replace("SEND_IMAGES", "").strip()
             if product_images:
@@ -350,6 +361,11 @@ def handle_message(sender_id, text, page_token):
 def detect_intent(text, history):
     """Detect user intent from message"""
     text_lower = text.lower()
+    
+    # Product availability - CHECK FIRST
+    availability_keywords = ["thiyanawada", "thiyanawadha", "ithiri thiyanawada", "stock thiyanawada", "available da"]
+    if any(kw in text_lower for kw in availability_keywords):
+        return "product_availability"
     
     photo_keywords = ["photo", "photos", "foto", "fotos", "pic", "pics", "picture", "pictures", 
                      "image", "images", "mata photos", "photos dana", "photos ewanna",
@@ -380,7 +396,7 @@ def detect_intent(text, history):
     if any(kw in text_lower for kw in order_keywords):
         return "how_to_order"
     
-    products_keywords = ["mona products", "products mona", "thiyanawada"]
+    products_keywords = ["mona products", "products mona"]
     if any(kw in text_lower for kw in products_keywords):
         return "product_list"
     
@@ -401,8 +417,10 @@ def extract_product_from_query(text):
         return "foldable"
     if "cloth rack" in text_lower:
         return "cloth rack"
-    if "storage rack" in text_lower:
+    if "storage rack" in text_lower or "storage" in text_lower:
         return "storage"
+    if "rack" in text_lower or "racks" in text_lower:
+        return "rack"
     
     return None
 
@@ -424,7 +442,7 @@ def is_valid_location(text):
     if any(loc in text_lower for loc in locations):
         return True
     
-    if len(text.split()) <= 3 and not any(word in text_lower for word in ["delivery", "order", "price", "photo", "kamathi", "kiyada", "kohamada"]):
+    if len(text.split()) <= 3 and not any(word in text_lower for word in ["delivery", "order", "price", "photo", "kamathi", "kiyada", "kohamada", "thiyanawada"]):
         return True
     
     return False
@@ -434,13 +452,62 @@ def is_valid_location(text):
 # Context-aware handlers
 # ======================
 
+def handle_availability_request(sender_id, user_text, products_context, product_images, page_token, ad_id, context):
+    """Handle 'thiyanawada' questions"""
+    
+    specific_product = extract_product_from_query(user_text)
+    
+    if not specific_product:
+        specific_product = context.get("product_name")
+    
+    if specific_product:
+        searched_products, searched_images = search_products_by_query(specific_product)
+        
+        if searched_products:
+            msg = f"Ow {specific_product} thiyanawa dear!\n\n{searched_products}\n\nDear 💙"
+            send_message(sender_id, msg, page_token)
+            save_message(sender_id, ad_id, "assistant", msg)
+            
+            if searched_images:
+                time.sleep(0.5)
+                for img_url in searched_images[:10]:
+                    send_image(sender_id, img_url, page_token)
+                    time.sleep(0.3)
+            
+            if not context.get("asked_order"):
+                time.sleep(1)
+                msg2 = "Order kamathi dha?\n\nDear 💙"
+                send_message(sender_id, msg2, page_token)
+                save_message(sender_id, ad_id, "assistant", msg2)
+                update_user_context(sender_id, asked_order=True)
+            return
+        else:
+            msg = f"Nehe dear, {specific_product} nehe.\n\nDear 💙"
+            send_message(sender_id, msg, page_token)
+            save_message(sender_id, ad_id, "assistant", msg)
+            return
+    
+    # Generic "thiyanawada" without product
+    if products_context:
+        msg = f"Ow thiyanawa dear!\n\n{products_context}\n\nDear 💙"
+    else:
+        msg = "Mata product name ekak ewanna dear.\n\nDear 💙"
+    
+    send_message(sender_id, msg, page_token)
+    save_message(sender_id, ad_id, "assistant", msg)
+    
+    if product_images:
+        time.sleep(0.5)
+        for img_url in product_images[:10]:
+            send_image(sender_id, img_url, page_token)
+            time.sleep(0.3)
+
+
 def handle_photo_request(sender_id, user_text, products_context, product_images, page_token, ad_id, context):
     """Handle photos with context awareness"""
     
-    # Try current message first
     specific_product = extract_product_from_query(user_text)
     
-    # If not found, use context
     if not specific_product and context.get("product_name"):
         specific_product = context.get("product_name")
         print(f"📸 Using product from context: {specific_product}", flush=True)
@@ -457,7 +524,6 @@ def handle_photo_request(sender_id, user_text, products_context, product_images,
             send_message(sender_id, msg, page_token)
             save_message(sender_id, ad_id, "assistant", msg)
             
-            # Only ask if not already asked
             if not context.get("asked_order"):
                 time.sleep(1)
                 msg2 = "Order kamathi dha?\n\nDear 💙"
@@ -466,7 +532,6 @@ def handle_photo_request(sender_id, user_text, products_context, product_images,
                 update_user_context(sender_id, asked_order=True)
             return
     
-    # Send all photos
     if product_images:
         for img_url in product_images[:10]:
             send_image(sender_id, img_url, page_token)
@@ -529,7 +594,6 @@ def handle_delivery_request(sender_id, page_token, ad_id, context):
     send_message(sender_id, msg1, page_token)
     save_message(sender_id, ad_id, "assistant", msg1)
     
-    # Only ask if not already asked
     if not context.get("asked_order"):
         time.sleep(1)
         msg2 = "Order kamathi dha?\n\nDear 💙"
@@ -542,10 +606,8 @@ def handle_details_request(sender_id, user_text, products_context, product_image
     """Handle details with FULL CONTEXT AWARENESS"""
     
     if products_context:
-        # Try current message first
         specific_product = extract_product_from_query(user_text)
         
-        # If not found, check history
         if not specific_product:
             history = get_conversation_history(sender_id, limit=5)
             
@@ -557,13 +619,11 @@ def handle_details_request(sender_id, user_text, products_context, product_image
                         print(f"📝 Found product in history: {specific_product}", flush=True)
                         break
         
-        # If still not found, use context
         if not specific_product and context.get("product_name"):
             specific_product = context.get("product_name")
             print(f"📝 Using product from context: {specific_product}", flush=True)
         
         if specific_product:
-            # Filter to specific product
             filtered_details = []
             products_lines = products_context.split("\n")
             
@@ -588,7 +648,6 @@ def handle_details_request(sender_id, user_text, products_context, product_image
         send_message(sender_id, msg, page_token)
         save_message(sender_id, ad_id, "assistant", msg)
         
-        # Only ask if not already asked
         if not context.get("asked_order"):
             time.sleep(1)
             msg2 = "Order kamathi dha?\n\nDear 💙"
@@ -604,7 +663,6 @@ def handle_details_request(sender_id, user_text, products_context, product_image
 def handle_height_request(sender_id, user_text, products_context, page_token, ad_id, context):
     """Handle height with context awareness"""
     
-    # Get specific product from context
     specific_product = extract_product_from_query(user_text) or context.get("product_name")
     
     if products_context:
@@ -714,7 +772,7 @@ def check_agreement(text):
     """Check if user agrees/says yes"""
     agreement_keywords = [
         "yes", "ow", "හරි", "ඔව්", "ok", "oka", "එහෙනම්",
-        "ඕනා", "කැමති", "kamathi", "hari", "okey"
+        "ඕනා", "කැමති", "kamathi", "hari", "okey", "okay"
     ]
     text_lower = text.lower()
     return any(keyword in text_lower for keyword in agreement_keywords)
@@ -731,7 +789,6 @@ def handle_contact_details(sender_id, text, page_token, ad_id, products_context)
         send_message(sender_id, confirm_msg, page_token)
         save_message(sender_id, ad_id, "assistant", confirm_msg)
         
-        # Clear context after order
         if sender_id in user_states:
             del user_states[sender_id]
     else:
@@ -860,7 +917,6 @@ DON'T ask "Order kamathi dha?" in every message!
         if products_context:
             system_prompt += f"\nAVAILABLE PRODUCTS:\n{products_context}\n"
         
-        # Add context info
         if context.get("product_name"):
             system_prompt += f"\nCONTEXT: User is interested in {context['product_name']}"
         if context.get("location"):
@@ -989,29 +1045,6 @@ def search_products_by_query(query):
 
             print(f"✅ Found {len(found_products)} products", flush=True)
             return products_text.strip(), found_images[:15]
-
-        all_products_text = ""
-        all_images = []
-        for row in records:
-            for i in range(1, 6):
-                name = row.get(f"product_{i}_name")
-                if name:
-                    price = row.get(f"product_{i}_price")
-                    details = row.get(f"product_{i}_details", "")
-                    
-                    all_products_text += f"{name} - {price}"
-                    if details:
-                        all_products_text += f"\n{details}"
-                    all_products_text += "\n\n"
-                    
-                    for img_num in range(1, 4):
-                        img_url = row.get(f"product_{i}_image_{img_num}")
-                        if img_url and img_url.startswith("http"):
-                            all_images.append(img_url)
-
-        if all_products_text:
-            print(f"ℹ️ Returning ALL products", flush=True)
-            return all_products_text.strip(), all_images[:15]
 
         return None, []
 
