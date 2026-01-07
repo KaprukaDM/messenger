@@ -160,8 +160,14 @@ def handle_message(sender_id, text, page_token):
         ad_id = get_user_ad_id(sender_id)
         save_message(sender_id, ad_id, "user", text)
 
-        # Get products and history for context
+        # Get products for ad if available
         products_context, product_images = get_products_for_ad(ad_id) if ad_id else (None, [])
+        
+        # CRITICAL FIX: If no products for ad, search ALL products by query
+        if not products_context:
+            products_context, product_images = search_products_by_query(text)
+            print(f"No ad products, searched and found: {bool(products_context)}", flush=True)
+        
         history = get_conversation_history(sender_id, limit=10)
         
         # CRITICAL: Check if user is sending complete contact details
@@ -178,7 +184,7 @@ def handle_message(sender_id, text, page_token):
                 user_states[sender_id]["location"] = text
                 user_states[sender_id]["step"] = "ask_order"
                 
-                combined_msg = "Hari! Delivery Rs.350. Order karanna kamathi dha?\n\nDear 💙"
+                combined_msg = "Hari! Delivery Rs.350. Order kamathi dha?\n\nDear 💙"
                 send_message(sender_id, combined_msg, page_token)
                 save_message(sender_id, ad_id, "assistant", combined_msg)
                 return
@@ -200,9 +206,8 @@ def handle_message(sender_id, text, page_token):
                     del user_states[sender_id]
                     return
             
-            # Collecting details - let AI handle it naturally
+            # Collecting details
             elif step in ["collect_details", "collect_details_direct"]:
-                # Check if they provided details
                 lead_info = extract_full_lead_info(text)
                 if lead_info.get("phone"):
                     handle_contact_details(sender_id, text, page_token, ad_id, products_context)
@@ -242,20 +247,17 @@ def handle_message(sender_id, text, page_token):
 
 def validate_reply(reply, products_context):
     """Validate that reply doesn't hallucinate products"""
-    # Check for common hallucination patterns
     hallucination_patterns = [
-        r'රු\.\s*\d+,\d+',  # Sinhala price format
-        r'Rs\.\s*\d+,\d+',  # English price format
+        r'රු\.\s*\d+,\d+',
+        r'Rs\.\s*\d+,\d+',
         r'\d+-Tier',
         r'Stainless Steel',
         r'Wooden Rack'
     ]
     
-    # If products exist, check if reply mentions products not in context
     if products_context:
         for pattern in hallucination_patterns:
             if re.search(pattern, reply):
-                # Check if this pattern exists in products_context
                 if not re.search(pattern, products_context):
                     print(f"Hallucination detected: {pattern}", flush=True)
                     return False
@@ -271,13 +273,11 @@ def detect_contact_details(text):
     """Detect if message contains phone number + other details"""
     has_phone = bool(re.search(r'0\d{9}|94\d{9}|\+94\d{9}', text.replace(' ', '').replace('-', '')))
     
-    # Check for address or name indicators
     address_indicators = ['no:', 'no.', 'road', 'street', 'colombo', 'kandy', 'galle', 'negombo', 'kurunegala', 'matara', 'anuradhapura']
     has_address = any(indicator in text.lower() for indicator in address_indicators)
     
     has_name = bool(re.search(r'[A-Z][a-z]+\s+[A-Z][a-z]+', text))
     
-    # Multi-line with phone suggests full details
     has_multiple_lines = len([l for l in text.split('\n') if l.strip()]) >= 2
     
     return has_phone and (has_address or has_name or has_multiple_lines)
@@ -304,7 +304,6 @@ def handle_contact_details(sender_id, text, page_token, ad_id, products_context)
         send_message(sender_id, confirm_msg, page_token)
         save_message(sender_id, ad_id, "assistant", confirm_msg)
         
-        # Clear flow
         if sender_id in user_states:
             del user_states[sender_id]
     else:
@@ -412,7 +411,6 @@ def save_complete_order(sender_id, ad_id, lead_info, products_context):
 def get_ai_response(user_message, history, products_context, product_images, sender_id, ad_id, retry=False):
     """Generate natural AI response - STRICT anti-hallucination"""
     try:
-        # Build STRICT system prompt
         system_prompt = """You are a friendly sales assistant for Social Mart Sri Lanka.
 
 CRITICAL LANGUAGE RULES:
@@ -426,7 +424,6 @@ SIMPLE SINGLISH EXAMPLES:
 ✅ "Ow thiyanawa dear!"
 ✅ "Price Rs.14,500."
 ✅ "Delivery Rs.350, 3-5 days."
-❌ "Thanks, Fari! Just to confirm, can you give me the full address in Kandy?"
 ❌ Long English sentences
 
 CRITICAL PRODUCT RULES - NEVER BREAK:
@@ -434,11 +431,10 @@ CRITICAL PRODUCT RULES - NEVER BREAK:
 2. Use EXACT product names and prices from the list
 3. If user asks about product NOT in list → say "Eka nehe dear" ONLY
 4. NEVER make up product names, prices, or details
-5. NEVER say "2-Tier", "3-Tier", "Wooden", "Stainless" if not in the list
-6. If no products available → say "Products nehe dear"
+5. If no products available → say "Products nehe dear"
 
 CONVERSATION HANDLING:
-1. Product questions → List from AVAILABLE PRODUCTS + add "SEND_IMAGES" + "START_LOCATION_FLOW"
+1. Product questions ("mona products", "thiyanawada", "racks") → List from AVAILABLE PRODUCTS + add "SEND_IMAGES" + "START_LOCATION_FLOW"
 2. Photo requests → Say "Mehenna photos!" + add "SEND_IMAGES"
 3. Price questions → Give EXACT price from list
 4. Details questions → Use product_details from list
@@ -449,39 +445,34 @@ CONVERSATION HANDLING:
 
         if products_context:
             system_prompt += f"\nAVAILABLE PRODUCTS (ONLY these exist):\n{products_context}\n"
-            system_prompt += "\n⚠️ NEVER mention products not in this list above!"
+            system_prompt += "\n⚠️ NEVER mention products not in this list!"
         else:
-            system_prompt += "\nNO PRODUCTS AVAILABLE. Say: 'Products nehe dear, contact karanna.'"
+            system_prompt += "\nNO PRODUCTS AVAILABLE. Say: 'Products nehe dear, mata message karanna.'"
 
         if retry:
-            system_prompt += "\n\n⚠️ RETRY: Previous response was invalid. Be more careful!"
+            system_prompt += "\n\n⚠️ RETRY: Previous response was invalid!"
 
-        # Add flow context
         if sender_id in user_states:
             step = user_states[sender_id].get("step")
             if step == "collect_details":
-                system_prompt += "\n\nUSER GIVING DETAILS: Ask for missing: name, address, phone (2-4 words)."
+                system_prompt += "\n\nUSER GIVING DETAILS: Ask for missing: name, address, phone."
 
-        # Build messages
         messages = [{"role": "system", "content": system_prompt}]
 
-        # Add history
-        for msg in history[-6:]:  # Reduced to keep context shorter
+        for msg in history[-6:]:
             messages.append({"role": msg["role"], "content": msg["message"]})
 
         messages.append({"role": "user", "content": user_message})
 
-        # Call OpenAI with stricter settings
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages,
-            max_tokens=60,  # Reduced for shorter responses
-            temperature=0.7,  # Lower for less creativity/hallucination
+            max_tokens=60,
+            temperature=0.7,
         )
 
         reply = response.choices[0].message.content.strip()
 
-        # Ensure "Dear 💙" ending
         if not reply.endswith("Dear 💙") and "Dear 💙" not in reply:
             reply = reply + "\n\nDear 💙"
 
@@ -497,7 +488,7 @@ CONVERSATION HANDLING:
 # =========================
 
 def get_products_for_ad(ad_id):
-    """Get products and images for ad - reads product_details column"""
+    """Get products and images for specific ad"""
     try:
         sheet = get_sheet()
         if not sheet:
@@ -517,17 +508,14 @@ def get_products_for_ad(ad_id):
                     details_key = f"product_{i}_details"
 
                     if row.get(name_key):
-                        # Build product text with details
                         product_line = f"{row[name_key]} - {row.get(price_key, '')}"
                         
-                        # Add details if available
                         details = row.get(details_key, "")
                         if details:
                             product_line += f"\n{details}"
                         
                         products_text += product_line + "\n\n"
 
-                        # Get all 3 images per product
                         for img_num in range(1, 4):
                             image_key = f"product_{i}_image_{img_num}"
                             if row.get(image_key):
@@ -541,6 +529,92 @@ def get_products_for_ad(ad_id):
 
     except Exception as e:
         print(f"Error getting products: {e}", flush=True)
+        return None, []
+
+
+def search_products_by_query(query):
+    """Search ALL products in sheet by query - FALLBACK when no ad_id"""
+    try:
+        sheet = get_sheet()
+        if not sheet:
+            return None, []
+
+        ad_products_sheet = sheet.worksheet("Ad_Products")
+        records = ad_products_sheet.get_all_records()
+
+        # Extract keywords from query
+        query_lower = query.lower()
+        keywords = re.findall(r'\w+', query_lower)
+
+        found_products = []
+        found_images = []
+
+        # Search through ALL rows and products
+        for row in records:
+            for i in range(1, 6):
+                name = str(row.get(f"product_{i}_name", "")).lower()
+                
+                if name:
+                    # Check if any keyword matches product name
+                    if any(kw in name for kw in keywords):
+                        prod_name = row.get(f"product_{i}_name")
+                        prod_price = row.get(f"product_{i}_price")
+                        prod_details = row.get(f"product_{i}_details", "")
+
+                        # Avoid duplicates
+                        if prod_name and prod_name not in [p["name"] for p in found_products]:
+                            found_products.append({
+                                "name": prod_name,
+                                "price": prod_price,
+                                "details": prod_details
+                            })
+
+                            # Get images
+                            for img_num in range(1, 4):
+                                img_url = row.get(f"product_{i}_image_{img_num}")
+                                if img_url and img_url.startswith("http"):
+                                    found_images.append(img_url)
+
+        # If found products, format them
+        if found_products:
+            products_text = ""
+            for prod in found_products[:5]:  # Max 5 products
+                products_text += f"{prod['name']} - {prod['price']}"
+                if prod['details']:
+                    products_text += f"\n{prod['details']}"
+                products_text += "\n\n"
+
+            print(f"Found {len(found_products)} products for query: {query}", flush=True)
+            return products_text.strip(), found_images[:15]
+
+        # If no matches found, return ALL products
+        all_products_text = ""
+        all_images = []
+        for row in records:
+            for i in range(1, 6):
+                name = row.get(f"product_{i}_name")
+                if name:
+                    price = row.get(f"product_{i}_price")
+                    details = row.get(f"product_{i}_details", "")
+                    
+                    all_products_text += f"{name} - {price}"
+                    if details:
+                        all_products_text += f"\n{details}"
+                    all_products_text += "\n\n"
+                    
+                    for img_num in range(1, 4):
+                        img_url = row.get(f"product_{i}_image_{img_num}")
+                        if img_url and img_url.startswith("http"):
+                            all_images.append(img_url)
+
+        if all_products_text:
+            print(f"No keyword match, returning ALL products", flush=True)
+            return all_products_text.strip(), all_images[:15]
+
+        return None, []
+
+    except Exception as e:
+        print(f"Error in search: {e}", flush=True)
         return None, []
 
 
@@ -566,64 +640,6 @@ def send_image(recipient_id, image_url, page_token):
 
     r = requests.post(url, params=params, json=payload)
     print(f"Send image: {r.status_code}", flush=True)
-
-
-def search_products_by_query(query):
-    """Search products using AI keywords"""
-    try:
-        keyword_response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "Extract product search keywords. Return only keywords, comma separated."},
-                {"role": "user", "content": query},
-            ],
-            max_tokens=30,
-        )
-
-        keywords = keyword_response.choices[0].message.content.lower()
-
-        sheet = get_sheet()
-        if not sheet:
-            return None, []
-
-        ad_products_sheet = sheet.worksheet("Ad_Products")
-        records = ad_products_sheet.get_all_records()
-
-        found_products = []
-        found_images = []
-
-        for row in records:
-            for i in range(1, 6):
-                name = str(row.get(f"product_{i}_name", "")).lower()
-
-                if name and any(kw.strip() in name for kw in keywords.split(",")):
-                    prod_name = row.get(f"product_{i}_name")
-                    prod_price = row.get(f"product_{i}_price")
-                    prod_details = row.get(f"product_{i}_details", "")
-
-                    if prod_name and prod_name not in [p["name"] for p in found_products]:
-                        found_products.append({"name": prod_name, "price": prod_price, "details": prod_details})
-
-                        for img_num in range(1, 4):
-                            img_url = row.get(f"product_{i}_image_{img_num}")
-                            if img_url and img_url.startswith("http"):
-                                found_images.append(img_url)
-
-        if found_products:
-            products_text = ""
-            for prod in found_products[:3]:
-                products_text += f"{prod['name']} - {prod['price']}"
-                if prod['details']:
-                    products_text += f"\n{prod['details']}"
-                products_text += "\n\n"
-
-            return products_text.strip(), found_images[:10]
-
-        return None, []
-
-    except Exception as e:
-        print(f"Error in search: {e}", flush=True)
-        return None, []
 
 
 # ====================
