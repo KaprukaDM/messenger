@@ -180,15 +180,18 @@ def handle_message(sender_id, text, page_token):
         if sender_id in user_states:
             step = user_states[sender_id].get("step")
             
-            # Location step
+            # Location step - FIXED to recognize locations properly
             if step in ["ask_location", "ask_location_for_delivery"]:
-                user_states[sender_id]["location"] = text
-                user_states[sender_id]["step"] = "ask_order"
-                
-                combined_msg = "Hari! Delivery Rs.350. Order kamathi dha?\n\nDear 💙"
-                send_message(sender_id, combined_msg, page_token)
-                save_message(sender_id, ad_id, "assistant", combined_msg)
-                return
+                # Check if it's a valid location
+                if is_valid_location(text):
+                    user_states[sender_id]["location"] = text
+                    user_states[sender_id]["step"] = "ask_order"
+                    
+                    combined_msg = "Hari! Delivery Rs.350. Order kamathi dha?\n\nDear 💙"
+                    send_message(sender_id, combined_msg, page_token)
+                    save_message(sender_id, ad_id, "assistant", combined_msg)
+                    return
+                # If not a location, continue to intent detection below
             
             # Order confirmation step
             elif step == "ask_order":
@@ -205,7 +208,6 @@ def handle_message(sender_id, text, page_token):
                     retry_msg = "Prashna thiyanawada dear? Order karanna kamathi nam mata kiyanna.\n\nDear 💙"
                     send_message(sender_id, retry_msg, page_token)
                     save_message(sender_id, ad_id, "assistant", retry_msg)
-                    # Keep in same step
                     return
             
             # Collecting details
@@ -219,9 +221,12 @@ def handle_message(sender_id, text, page_token):
         intent = detect_intent(text, history)
         print(f"🎯 Detected intent: {intent}", flush=True)
 
-        # Handle specific intents - PHOTOS FIRST
+        # Handle specific intents - PHOTOS AND DELIVERY FIRST
         if intent == "photos":
             handle_photo_request(sender_id, products_context, product_images, page_token, ad_id)
+            return
+        elif intent == "delivery":
+            handle_delivery_request(sender_id, page_token, ad_id)
             return
         elif intent == "details":
             handle_details_request(sender_id, products_context, page_token, ad_id)
@@ -282,6 +287,13 @@ def detect_intent(text, history):
     if any(kw in text_lower for kw in photo_keywords):
         return "photos"
     
+    # Delivery charges - ADD THIS
+    delivery_keywords = ["delivery", "delivery charge", "delivery charges", "chargers", 
+                        "delivery fee", "delivery kiyada", "delivery cost", "delivery eka kiyada",
+                        "delivery charges kiyada", "delivery ekkada", "charges kiyada"]
+    if any(kw in text_lower for kw in delivery_keywords):
+        return "delivery"
+    
     # Details/Visthara request
     details_keywords = ["details", "visthara", "visthara denna", "thawa visthara", 
                        "mata visthara", "more info", "info", "specification"]
@@ -308,6 +320,33 @@ def detect_intent(text, history):
     return "general"
 
 
+def is_valid_location(text):
+    """Check if text is a valid Sri Lankan location"""
+    # Sri Lankan cities/districts
+    locations = [
+        "colombo", "kandy", "galle", "jaffna", "negombo", "matara", "kurunegala",
+        "anuradhapura", "trincomalee", "batticaloa", "ratnapura", "badulla", "ampara",
+        "hambantota", "kalutara", "kegalle", "kilinochchi", "mannar", "monaragala",
+        "mullaitivu", "nuwara eliya", "polonnaruwa", "puttalam", "vavuniya",
+        "homagama", "maharagama", "dehiwala", "mount lavinia", "moratuwa", "panadura",
+        "nugegoda", "kotte", "kaduwela", "kelaniya", "wattala", "ja-ela",
+        # Common patterns
+        "road", "street", "lane", "town", "city", "gama", "watta"
+    ]
+    
+    text_lower = text.lower()
+    
+    # Check if any location keyword is in text
+    if any(loc in text_lower for loc in locations):
+        return True
+    
+    # Check if it's short (likely a place name) and not a question
+    if len(text.split()) <= 3 and not any(word in text_lower for word in ["delivery", "order", "price", "photo", "kamathi", "kiyada", "kohamada"]):
+        return True
+    
+    return False
+
+
 def handle_photo_request(sender_id, products_context, product_images, page_token, ad_id):
     """Handle when user asks for photos"""
     if product_images:
@@ -322,6 +361,13 @@ def handle_photo_request(sender_id, products_context, product_images, page_token
         msg = "Photos nehe dear, mata message karanna.\n\nDear 💙"
         send_message(sender_id, msg, page_token)
         save_message(sender_id, ad_id, "assistant", msg)
+
+
+def handle_delivery_request(sender_id, page_token, ad_id):
+    """Handle delivery charges questions"""
+    msg = "Delivery Rs.350 dear! Island-wide delivery.\n\nOrder kamathi dha?\n\nDear 💙"
+    send_message(sender_id, msg, page_token)
+    save_message(sender_id, ad_id, "assistant", msg)
 
 
 def handle_details_request(sender_id, products_context, page_token, ad_id):
@@ -610,6 +656,7 @@ ANSWER QUESTIONS DIRECTLY:
 - "X thiyanawadha?" → Answer "Ow thiyanawa" or "Nehe dear"
 - "Kohamada order karanai" → Explain: location ewanna, then details ewanna
 - Photos request → Say "SEND_IMAGES" to trigger image sending
+- Delivery → "Delivery Rs.350 dear"
 
 NEVER END WITH "Hari dear!" - Always ask: "Order kamathi dha?"
 
