@@ -219,8 +219,11 @@ def handle_message(sender_id, text, page_token):
         intent = detect_intent(text, history)
         print(f"🎯 Detected intent: {intent}", flush=True)
 
-        # Handle specific intents
-        if intent == "details":
+        # Handle specific intents - PHOTOS FIRST
+        if intent == "photos":
+            handle_photo_request(sender_id, products_context, product_images, page_token, ad_id)
+            return
+        elif intent == "details":
             handle_details_request(sender_id, products_context, page_token, ad_id)
             return
         elif intent == "height":
@@ -271,6 +274,14 @@ def detect_intent(text, history):
     """Detect user intent from message"""
     text_lower = text.lower()
     
+    # Photo/Image request - CHECK THIS FIRST
+    photo_keywords = ["photo", "photos", "foto", "fotos", "pic", "pics", "picture", "pictures", 
+                     "image", "images", "mata photos", "photos dana", "photos ewanna",
+                     "pics dana", "photo ekak", "image ekak", "foto ekak", "picture ekak",
+                     "පින්තූර", "පින්තූරය", "dana puluwang", "puluwang dha photo"]
+    if any(kw in text_lower for kw in photo_keywords):
+        return "photos"
+    
     # Details/Visthara request
     details_keywords = ["details", "visthara", "visthara denna", "thawa visthara", 
                        "mata visthara", "more info", "info", "specification"]
@@ -295,6 +306,22 @@ def detect_intent(text, history):
         return "product_list"
     
     return "general"
+
+
+def handle_photo_request(sender_id, products_context, product_images, page_token, ad_id):
+    """Handle when user asks for photos"""
+    if product_images:
+        # Send all images
+        for img_url in product_images[:10]:
+            send_image(sender_id, img_url, page_token)
+        
+        msg = "Mehenna photos dear! Order kamathi dha?\n\nDear 💙"
+        send_message(sender_id, msg, page_token)
+        save_message(sender_id, ad_id, "assistant", msg)
+    else:
+        msg = "Photos nehe dear, mata message karanna.\n\nDear 💙"
+        send_message(sender_id, msg, page_token)
+        save_message(sender_id, ad_id, "assistant", msg)
 
 
 def handle_details_request(sender_id, products_context, page_token, ad_id):
@@ -582,6 +609,7 @@ ANSWER QUESTIONS DIRECTLY:
 - Height → Give height info if available in details
 - "X thiyanawadha?" → Answer "Ow thiyanawa" or "Nehe dear"
 - "Kohamada order karanai" → Explain: location ewanna, then details ewanna
+- Photos request → Say "SEND_IMAGES" to trigger image sending
 
 NEVER END WITH "Hari dear!" - Always ask: "Order kamathi dha?"
 
