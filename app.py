@@ -4,6 +4,7 @@ import json
 import re
 from flask import Flask, request
 from openai import OpenAI
+import httpx
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
@@ -35,8 +36,12 @@ if PAGE_ID_2 and PAGE_ACCESS_TOKEN_2:
 if PAGE_ID_3 and PAGE_ACCESS_TOKEN_3:
     PAGE_MAP[PAGE_ID_3] = PAGE_ACCESS_TOKEN_3
 
-# Initialize OpenAI
-client = OpenAI(api_key=OPENAI_API_KEY)
+# Initialize OpenAI with timeout and retry settings
+client = OpenAI(
+    api_key=OPENAI_API_KEY,
+    timeout=httpx.Timeout(30.0, connect=10.0),
+    max_retries=2
+)
 
 # User conversation state tracking
 user_states = {}
@@ -560,6 +565,7 @@ Examples:
             ],
             max_tokens=150,
             temperature=0.3,
+            timeout=20
         )
 
         result = response.choices[0].message.content.strip()
@@ -575,6 +581,13 @@ Examples:
                 "entities": {}
             }
 
+    except (ConnectionError, TimeoutError, httpx.ConnectError, httpx.TimeoutException) as e:
+        print(f"Intent detection connection error: {type(e).__name__} - {str(e)}", flush=True)
+        return {
+            "intent": "general",
+            "confidence": 0.5,
+            "entities": {}
+        }
     except Exception as e:
         print(f"Intent detection error: {e}", flush=True)
         return {
@@ -1200,6 +1213,7 @@ DON'T ask "Order kamathi dha?" in every message!
             messages=messages,
             max_tokens=60,
             temperature=0.3,
+            timeout=25
         )
 
         reply = response.choices[0].message.content.strip()
@@ -1209,6 +1223,9 @@ DON'T ask "Order kamathi dha?" in every message!
 
         return reply
 
+    except (ConnectionError, TimeoutError, httpx.ConnectError, httpx.TimeoutException) as e:
+        print(f"OpenAI connection error: {type(e).__name__} - {str(e)}", flush=True)
+        return "Sorry dear, issue ekak.\n\nDear 💙"
     except Exception as e:
         print(f"OpenAI error: {e}", flush=True)
         return "Sorry dear, issue ekak.\n\nDear 💙"
