@@ -159,11 +159,18 @@ async function handleMessengerEvent(pageId, event) {
 }
 
 // ---------------------------------------------------------------------------
+// Render sets RENDER_GIT_COMMIT automatically for git-deployed services, so
+// this tells us exactly which commit is actually live - no more guessing
+// whether a fix has been deployed yet.
+const DEPLOYED_COMMIT = process.env.RENDER_GIT_COMMIT
+  ? process.env.RENDER_GIT_COMMIT.slice(0, 7)
+  : "local";
+
 app.get("/", (_req, res) => {
-  res.send("Kapruka Messenger bot is running.");
+  res.send(`Kapruka Messenger bot is running. (commit: ${DEPLOYED_COMMIT})`);
 });
 
 app.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
+  console.log(`Server listening on port ${PORT} (commit: ${DEPLOYED_COMMIT})`);
   console.log("Configured Pages:", meta.listConfiguredPageIds());
 });
