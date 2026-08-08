@@ -6,8 +6,6 @@ services:
     buildCommand: npm install
     startCommand: npm start
     envVars:
-      - key: PORT
-        value: 3000
       - key: GRAPH_API_VERSION
         value: v24.0
       - key: OPENAI_MODEL
