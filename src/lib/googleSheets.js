@@ -199,9 +199,46 @@ async function upsertCustomer({ customerId, name, platform, adId }) {
   });
 }
 
+/**
+ * Reload the most recent messages for a customer from the Conversations tab.
+ * Used to restore chat memory after a server restart (e.g. Render free tier
+ * spinning down between messages), since the in-memory conversation buffer
+ * doesn't survive that.
+ */
+async function getRecentHistory(customerId, limit = 20) {
+  const sheets = getClient();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${TAB_CONVERSATIONS}!A:L`,
+  });
+
+  const rows = res.data.values || [];
+  if (rows.length < 2) return [];
+
+  const headers = rows[0].map((h) => String(h).trim());
+  const idxCustomer = headers.indexOf("customer_id");
+  const idxDirection = headers.indexOf("direction");
+  const idxText = headers.indexOf("message_text");
+  if (idxCustomer === -1 || idxDirection === -1 || idxText === -1) return [];
+
+  const matches = [];
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (row[idxCustomer] === customerId && row[idxText]) {
+      matches.push({
+        role: row[idxDirection] === "Incoming" ? "user" : "assistant",
+        content: row[idxText],
+      });
+    }
+  }
+
+  return matches.slice(-limit);
+}
+
 module.exports = {
   getProductContextByAdId,
   loadAdMapping,
   logMessage,
   upsertCustomer,
+  getRecentHistory,
 };

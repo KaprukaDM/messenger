@@ -107,6 +107,18 @@ async function handleMessengerEvent(pageId, event) {
     }),
   ]).catch((err) => console.error("[sheets] Failed to log incoming message:", err));
 
+  // Restore memory from the durable log if this process doesn't have it
+  // in-memory yet (e.g. Render's free tier just woke back up).
+  if (conversationStore.getHistory(psid).length === 0) {
+    const priorHistory = await googleSheets
+      .getRecentHistory(psid)
+      .catch((err) => {
+        console.error("[sheets] Failed to restore history:", err);
+        return [];
+      });
+    conversationStore.seedHistoryIfEmpty(psid, priorHistory);
+  }
+
   conversationStore.addTurn(psid, "user", text);
 
   // Ad-triggered conversations get fast, pre-loaded product context.

@@ -6,7 +6,7 @@
  * clears it. The Google Sheets Conversations tab is the durable log.
  */
 
-const MAX_TURNS = 12; // keep last N messages (user+assistant combined)
+const MAX_TURNS = 20; // keep last N messages (user+assistant combined)
 const store = new Map(); // customerId -> { history: [...], adId: string|null }
 
 function getSession(customerId) {
@@ -38,4 +38,16 @@ function getHistory(customerId) {
   return getSession(customerId).history;
 }
 
-module.exports = { addTurn, setAdId, getAdId, getHistory };
+/**
+ * Populate history for a customer ONLY if it's currently empty — used to
+ * restore memory from the Google Sheets log after a server restart, without
+ * clobbering an already-live in-memory conversation.
+ */
+function seedHistoryIfEmpty(customerId, historyFromLog) {
+  const session = getSession(customerId);
+  if (session.history.length === 0 && historyFromLog && historyFromLog.length > 0) {
+    session.history = historyFromLog.slice(-MAX_TURNS);
+  }
+}
+
+module.exports = { addTurn, setAdId, getAdId, getHistory, seedHistoryIfEmpty };
