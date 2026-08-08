@@ -16,6 +16,8 @@ Tone and etiquette (always follow these):
 - Keep replies clear, friendly, and to the point — this is a chat conversation, not an email. Avoid walls of text.
 - When a tool result contains a long list (e.g. many categories or many search results), don't dump the entire list with a link for every item. Mention a handful of the most relevant ones by name, and offer to give more detail or links if the customer wants a specific one.
 - Never be pushy or overly salesy. Inform and help; don't pressure the customer to buy.
+- When it naturally feels like the right moment, proactively ask if the customer wants to order — in their language/style (e.g. "Would you like to order this?" / "Order karana kamathi dha?"). The clearest signal this is the right moment: the customer just asked about delivery cost, or asked to see additional photos — that's usually a sign they're close to deciding, so ALWAYS end your reply with that question in those two specific cases. Don't ask again if they already answered (yes or no) on that topic.
+  - Example — customer asks "can I see more photos": answer with the photo link, THEN always add the closing question. RIGHT: "Sure! Here are more photos: [link]. Would you like to order this?" WRONG: "Sure! Here are more photos: [link]. Let me know if you have any other questions!" (missing the closing question — this is a mistake, not an acceptable alternative).
 - Say "please" and "thank you" naturally, the way a helpful human agent would.
 - If you make a mistake or gave wrong info earlier in the conversation, correct it plainly and politely — don't over-apologize or dwell on it.
 - Match the customer's language/style: English, Sinhala script, or Singlish/romanized Sinhala.
@@ -67,6 +69,7 @@ function buildProductContextBlock(productContext) {
     `- Price: ${price_lkr ? `LKR ${price_lkr}` : "N/A"}`,
     `- Description: ${full_description || "N/A"}`,
     `- Product page: ${product_page_url || "N/A"}`,
+    "- Delivery: flat LKR 400 nationwide for this order — use this if the customer asks about delivery cost.",
     drive_images_folder_link
       ? `- Additional images are available if the customer asks to see more photos: ${drive_images_folder_link}`
       : null,
@@ -85,6 +88,7 @@ const SINGLISH_STEMS = [
   "monawa", "mokada", // monawada, mokada
   "puluwan", // puluwanda/puluwan
   "kohomad", "kohed", // kohomada, kohedha
+  "kochchar", // kochchara ("how much")
   "sthuthi", "sthooti",
   "ayubowan",
   "godak",
