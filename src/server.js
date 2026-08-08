@@ -89,6 +89,8 @@ async function handleMessengerEvent(pageId, event) {
   const text = event.message && event.message.text;
   if (!text) return;
 
+  console.log(`[messenger] Incoming from ${psid} (page ${pageId})${adId ? ` [ad:${adId}]` : ""}: ${text}`);
+
   const productContext = await googleSheets.getProductContextByAdId(adId);
 
   // Log the incoming message + update the customer record.
@@ -120,6 +122,8 @@ async function handleMessengerEvent(pageId, event) {
   }
 
   conversationStore.addTurn(psid, "assistant", reply);
+
+  console.log(`[messenger] Replying to ${psid}: ${reply}`);
 
   await meta.sendMessengerText(pageId, psid, reply);
 
