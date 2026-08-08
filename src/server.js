@@ -91,8 +91,6 @@ async function handleMessengerEvent(pageId, event) {
 
   console.log(`[messenger] Incoming from ${psid} (page ${pageId})${adId ? ` [ad:${adId}]` : ""}: ${text}`);
 
-  const productContext = await googleSheets.getProductContextByAdId(adId);
-
   // Log the incoming message + update the customer record.
   await Promise.all([
     googleSheets.logMessage({
@@ -111,10 +109,20 @@ async function handleMessengerEvent(pageId, event) {
 
   conversationStore.addTurn(psid, "user", text);
 
-  const reply = await openai.generateReply({
-    history: conversationStore.getHistory(psid),
-    productContext,
-  });
+  // Ad-triggered conversations get fast, pre-loaded product context.
+  // Everything else gets live Kapruka MCP tools (search, delivery, order tracking).
+  let reply;
+  if (adId) {
+    const productContext = await googleSheets.getProductContextByAdId(adId);
+    reply = await openai.generateReply({
+      history: conversationStore.getHistory(psid),
+      productContext,
+    });
+  } else {
+    reply = await openai.generateReplyWithTools({
+      history: conversationStore.getHistory(psid),
+    });
+  }
 
   if (!reply) {
     console.warn("[openai] Empty reply generated for", psid);
