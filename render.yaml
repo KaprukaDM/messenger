@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: kapruka-messenger-bot
+    env: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: PORT
+        value: 3000
+      - key: GRAPH_API_VERSION
+        value: v24.0
+      - key: OPENAI_MODEL
+        value: gpt-4o-mini
+      - key: VERIFY_TOKEN
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: PAGE_ID_1
+        sync: false
+      - key: PAGE_ACCESS_TOKEN_1
+        sync: false
+      - key: PAGE_ID_2
+        sync: false
+      - key: PAGE_ACCESS_TOKEN_2
+        sync: false
+      - key: PAGE_ID_3
+        sync: false
+      - key: PAGE_ACCESS_TOKEN_3
+        sync: false
+      - key: GOOGLE_SHEET_ID
+        sync: false
+      - key: SHEET_NAME
+        sync: false
+      - key: GOOGLE_SHEETS_CREDS
+        sync: false
