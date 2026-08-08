@@ -2,7 +2,7 @@ services:
   - type: web
     name: kapruka-messenger-bot
     env: node
-    plan: starter
+    plan: free
     buildCommand: npm install
     startCommand: npm start
     envVars:
