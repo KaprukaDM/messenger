@@ -11,9 +11,34 @@ const store = new Map(); // customerId -> { history: [...], adId: string|null }
 
 function getSession(customerId) {
   if (!store.has(customerId)) {
-    store.set(customerId, { history: [], adId: null });
+    store.set(customerId, { history: [], adId: null, name: null, pendingCloseTimeout: null });
   }
   return store.get(customerId);
+}
+
+/** Cancels any pending delayed closing-question follow-up for this customer
+ * (e.g. because they sent a new message before it fired — the conversation
+ * has moved on, so the stale offer shouldn't go out). */
+function clearPendingClose(customerId) {
+  const session = getSession(customerId);
+  if (session.pendingCloseTimeout) {
+    clearTimeout(session.pendingCloseTimeout);
+    session.pendingCloseTimeout = null;
+  }
+}
+
+function setPendingClose(customerId, timeoutHandle) {
+  clearPendingClose(customerId);
+  getSession(customerId).pendingCloseTimeout = timeoutHandle;
+}
+
+function setName(customerId, name) {
+  if (!name) return;
+  getSession(customerId).name = name;
+}
+
+function getName(customerId) {
+  return getSession(customerId).name;
 }
 
 function addTurn(customerId, role, content) {
@@ -50,4 +75,14 @@ function seedHistoryIfEmpty(customerId, historyFromLog) {
   }
 }
 
-module.exports = { addTurn, setAdId, getAdId, getHistory, seedHistoryIfEmpty };
+module.exports = {
+  addTurn,
+  setAdId,
+  getAdId,
+  getHistory,
+  seedHistoryIfEmpty,
+  setName,
+  getName,
+  setPendingClose,
+  clearPendingClose,
+};

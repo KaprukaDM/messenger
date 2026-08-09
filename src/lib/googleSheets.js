@@ -7,6 +7,11 @@ const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID;
 const TAB_AD_MAPPING = "Ad_Product_Mapping";
 const TAB_CONVERSATIONS = "Conversations";
 const TAB_CUSTOMERS = "Customers";
+const TAB_ORDERS = "Orders";
+const ORDERS_HEADERS = [
+  "order_id", "timestamp", "customer_id", "platform", "ad_id",
+  "product_name", "customer_name", "phone", "address", "status", "notes",
+];
 
 let sheetsClient = null;
 
@@ -294,6 +299,74 @@ async function listMessagesForCustomer(customerId) {
   return rowsToObjects(res.data.values || []).filter((m) => m.customer_id === customerId);
 }
 
+let ordersTabReady = false;
+
+/**
+ * Create the Orders tab (with headers) if it doesn't exist yet — so there's
+ * no manual sheet-setup step for this feature. Safe to call repeatedly.
+ */
+async function ensureOrdersTabExists() {
+  if (ordersTabReady) return;
+
+  const sheets = getClient();
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
+  const exists = (meta.data.sheets || []).some(
+    (s) => s.properties && s.properties.title === TAB_ORDERS
+  );
+
+  if (!exists) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: { requests: [{ addSheet: { properties: { title: TAB_ORDERS } } }] },
+    });
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${TAB_ORDERS}!A1`,
+      valueInputOption: "RAW",
+      requestBody: { values: [ORDERS_HEADERS] },
+    });
+  }
+
+  ordersTabReady = true;
+}
+
+let orderCounter = 0;
+function nextOrderId() {
+  orderCounter += 1;
+  return `ORD-${Date.now()}-${orderCounter}`;
+}
+
+/**
+ * Record a manually-placed order (customer gave name/phone/address in
+ * chat) — separate from Kapruka's own order system, this is for ad-driven
+ * products the team fulfills directly.
+ */
+async function logOrder({
+  customerId,
+  platform,
+  adId,
+  productName,
+  customerName,
+  phone,
+  address,
+  notes = "",
+}) {
+  await ensureOrdersTabExists();
+  await appendRow(TAB_ORDERS, [
+    nextOrderId(),
+    nowIso(),
+    customerId,
+    platform,
+    adId || "",
+    productName || "",
+    customerName || "",
+    phone || "",
+    address || "",
+    "New",
+    notes,
+  ]);
+}
+
 module.exports = {
   getProductContextByAdId,
   loadAdMapping,
@@ -303,4 +376,5 @@ module.exports = {
   getRecentHistory,
   listCustomers,
   listMessagesForCustomer,
+  logOrder,
 };

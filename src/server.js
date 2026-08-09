@@ -91,17 +91,27 @@ async function handleMessengerEvent(pageId, event) {
 
   console.log(`[messenger] Incoming from ${psid} (page ${pageId})${adId ? ` [ad:${adId}]` : ""}: ${text}`);
 
+  // Fetch the customer's real name once per process (cached after that) so
+  // the dashboard shows a name instead of a raw PSID.
+  let customerName = conversationStore.getName(psid);
+  if (!customerName) {
+    customerName = await meta.getUserProfile(pageId, psid).catch(() => null);
+    if (customerName) conversationStore.setName(psid, customerName);
+  }
+
   // Log the incoming message + update the customer record.
   await Promise.all([
     googleSheets.logMessage({
       platform: "Facebook",
       customerId: psid,
+      customerName,
       adId,
       direction: "Incoming",
       messageText: text,
     }),
     googleSheets.upsertCustomer({
       customerId: psid,
+      name: customerName,
       platform: "Facebook",
       adId,
     }),
@@ -121,11 +131,16 @@ async function handleMessengerEvent(pageId, event) {
 
   conversationStore.addTurn(psid, "user", text);
 
+  // A new message means any pending "would you like to order?" follow-up
+  // from before is stale - the conversation has moved on.
+  conversationStore.clearPendingClose(psid);
+
   // Ad-triggered conversations get fast, pre-loaded product context.
   // Everything else gets live Kapruka MCP tools (search, delivery, order tracking).
   let result;
+  let productContext = null;
   if (adId) {
-    const productContext = await googleSheets.getProductContextByAdId(adId);
+    productContext = await googleSheets.getProductContextByAdId(adId);
     result = await openai.generateReply({
       history: conversationStore.getHistory(psid),
       productContext,
@@ -136,7 +151,7 @@ async function handleMessengerEvent(pageId, event) {
     });
   }
 
-  const { text: reply, escalated } = result;
+  const { text: reply, escalated, offerClose, orderInfo } = result;
 
   if (!reply) {
     console.warn("[openai] Empty reply generated for", psid);
@@ -146,7 +161,7 @@ async function handleMessengerEvent(pageId, event) {
   conversationStore.addTurn(psid, "assistant", reply);
 
   console.log(
-    `[messenger] Replying to ${psid}: ${reply}${escalated ? " [ESCALATED]" : ""}`
+    `[messenger] Replying to ${psid}: ${reply}${escalated ? " [ESCALATED]" : ""}${offerClose ? " [OFFER_CLOSE queued]" : ""}`
   );
 
   await meta.sendMessengerText(pageId, psid, reply);
@@ -155,6 +170,7 @@ async function handleMessengerEvent(pageId, event) {
     .logMessage({
       platform: "Facebook",
       customerId: psid,
+      customerName,
       adId,
       direction: "Outgoing",
       messageText: reply,
@@ -167,6 +183,56 @@ async function handleMessengerEvent(pageId, event) {
       .markCustomerEscalated(psid)
       .catch((err) => console.error("[sheets] Failed to mark customer escalated:", err));
   }
+
+  if (orderInfo) {
+    await googleSheets
+      .logOrder({
+        customerId: psid,
+        platform: "Facebook",
+        adId,
+        productName: productContext ? productContext.product_name : "",
+        customerName: orderInfo.name,
+        phone: orderInfo.phone,
+        address: orderInfo.address,
+      })
+      .catch((err) => console.error("[sheets] Failed to log order:", err));
+  }
+
+  if (offerClose) {
+    const timeoutHandle = setTimeout(() => {
+      sendClosingFollowUp(pageId, psid).catch((err) =>
+        console.error("[messenger] Failed to send closing follow-up:", err)
+      );
+    }, 20000);
+    conversationStore.setPendingClose(psid, timeoutHandle);
+  }
+}
+
+/**
+ * Sends the "would you like to order?" follow-up ~20s after a reply that
+ * signaled OFFER_CLOSE, mimicking a human agent checking back in rather
+ * than cramming the question into the same message.
+ */
+async function sendClosingFollowUp(pageId, psid) {
+  const history = conversationStore.getHistory(psid);
+  const closingQuestion = openai.getClosingQuestion(history);
+
+  conversationStore.addTurn(psid, "assistant", closingQuestion);
+  console.log(`[messenger] Sending closing follow-up to ${psid}: ${closingQuestion}`);
+
+  await meta.sendMessengerText(pageId, psid, closingQuestion);
+
+  await googleSheets
+    .logMessage({
+      platform: "Facebook",
+      customerId: psid,
+      customerName: conversationStore.getName(psid),
+      adId: conversationStore.getAdId(psid),
+      direction: "Outgoing",
+      messageText: closingQuestion,
+      notes: "closing follow-up",
+    })
+    .catch((err) => console.error("[sheets] Failed to log closing follow-up:", err));
 }
 
 // ---------------------------------------------------------------------------

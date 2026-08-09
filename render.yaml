@@ -9,7 +9,7 @@ services:
       - key: GRAPH_API_VERSION
         value: v24.0
       - key: OPENAI_MODEL
-        value: gpt-4o-mini
+        value: gpt-4o
       - key: VERIFY_TOKEN
         sync: false
       - key: OPENAI_API_KEY

@@ -62,8 +62,35 @@ async function sendMessengerText(pageId, recipientPsid, text) {
   return res.json();
 }
 
+/**
+ * Fetch a Messenger user's display name via the Graph API user profile
+ * endpoint. Returns null on any failure (missing permission, deleted
+ * account, etc.) rather than throwing — a missing name shouldn't break
+ * message handling.
+ * @param {string} pageId - which Page's token to use
+ * @param {string} psid - the customer's page-scoped user ID
+ */
+async function getUserProfile(pageId, psid) {
+  const token = getPageAccessToken(pageId);
+  if (!token) return null;
+
+  const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${psid}?fields=first_name,last_name&access_token=${encodeURIComponent(token)}`;
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const name = [data.first_name, data.last_name].filter(Boolean).join(" ");
+    return name || null;
+  } catch (err) {
+    console.error("[meta] Failed to fetch user profile:", err);
+    return null;
+  }
+}
+
 module.exports = {
   getPageAccessToken,
   listConfiguredPageIds,
   sendMessengerText,
+  getUserProfile,
 };

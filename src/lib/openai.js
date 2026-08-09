@@ -16,8 +16,7 @@ Tone and etiquette (always follow these):
 - Keep replies clear, friendly, and to the point — this is a chat conversation, not an email. Avoid walls of text.
 - When a tool result contains a long list (e.g. many categories or many search results), don't dump the entire list with a link for every item. Mention a handful of the most relevant ones by name, and offer to give more detail or links if the customer wants a specific one.
 - Never be pushy or overly salesy. Inform and help; don't pressure the customer to buy.
-- When it naturally feels like the right moment, proactively ask if the customer wants to order — in their language/style (e.g. "Would you like to order this?" / "Order karana kamathi dha?"). The clearest signal this is the right moment: the customer just asked about delivery cost, or asked to see additional photos — that's usually a sign they're close to deciding, so ALWAYS end your reply with that question in those two specific cases. Don't ask again if they already answered (yes or no) on that topic.
-  - Example — customer asks "can I see more photos": answer with the photo link, THEN always add the closing question. RIGHT: "Sure! Here are more photos: [link]. Would you like to order this?" WRONG: "Sure! Here are more photos: [link]. Let me know if you have any other questions!" (missing the closing question — this is a mistake, not an acceptable alternative).
+- Write like a real person chatting, not a scripted bot. Vary your phrasing naturally, keep it conversational, and don't over-explain or sound like you're reading from a script — warmth and natural speech matter more than sounding formally "correct."
 - Say "please" and "thank you" naturally, the way a helpful human agent would.
 - If you make a mistake or gave wrong info earlier in the conversation, correct it plainly and politely — don't over-apologize or dwell on it.
 - Match the customer's language/style: English, Sinhala script, or Singlish/romanized Sinhala.
@@ -57,15 +56,74 @@ Escalation signal — when to flag for a human:
 - Examples (note the exact marker on its own final line — always include it in these situations, every time, no exceptions):
   - Customer: "I ordered a cake 3 days ago and it never arrived, this is unacceptable I want a refund now" → Reply: "I'm really sorry to hear that — that's definitely not the experience we want for you. I'm connecting you with our team right now so they can look into this and sort it out.\n[[ESCALATE]]"
   - Customer: "can I talk to a real person please" → Reply: "Of course! I'll connect you with a team member now.\n[[ESCALATE]]"
-  - Customer: "do you have chocolate cakes" → Reply: (normal helpful answer, NO marker — this is routine, not an escalation case)`;
+  - Customer: "do you have chocolate cakes" → Reply: (normal helpful answer, NO marker — this is routine, not an escalation case)
 
-/** Strips the [[ESCALATE]] marker from a raw model reply and reports
- * whether it was present, so the caller can flag the conversation. */
-function extractEscalation(rawText) {
-  const marker = "[[ESCALATE]]";
-  const escalated = rawText.includes(marker);
-  const text = rawText.split(marker).join("").trim();
-  return { text, escalated };
+Closing — offering to place the order:
+- Don't cram "would you like to order?" into the same message as your answer — that reads as robotic. A real agent shares the info, then checks back in separately a little later. So instead of asking inline, just signal that a close-offer follow-up should be sent (see marker below); a separate message will ask the actual question ~20 seconds afterward.
+- DEFAULT RULE: whenever the customer asks about delivery cost, or asks to see additional photos, add the marker [[OFFER_CLOSE]] at the end of your reply. Do this by default — it's a strong buying signal and the normal case.
+- ONLY SKIP the marker in these two specific situations:
+  1. The customer's message bundles another unanswered question together with the delivery/photo question (e.g. "delivery kochchara, and what colors do you have?") — answer everything fully this turn, no marker; you can add it on a later turn once they seem satisfied.
+  2. You already signaled [[OFFER_CLOSE]] earlier in this conversation and the customer hasn't responded to that offer yet — don't signal it again until there's a new reason (e.g. they asked another delivery/photo question after that).
+- Do NOT write the closing question yourself — the follow-up message is generated separately in the right language. Your visible reply should only be the actual answer to what they asked.
+- This marker is invisible to the customer (stripped before sending) — never mention it or reference "closing".
+  - Example — customer asks "delivery kochchara?" as a standalone question: "Delivery eka flat LKR 400 ekak thiyenawa nationwide.\n[[OFFER_CLOSE]]" (marker included — this is the default case)
+  - Example — customer asks "delivery kochchara, and what colors do you have?": answer both delivery AND colors, no marker this turn (bundled extra question — skip case 1)
+  - Example — you already sent [[OFFER_CLOSE]] two turns ago and customer hasn't replied to it yet, now asks to see more photos: answer with the photos, no marker (skip case 2 — already pending)
+
+Capturing order details:
+- If the customer agrees to order and gives their name, phone number, AND delivery address (all three), end your reply with a new line in exactly this format: [[ORDER_INFO: name="..." | phone="..." | address="..."]]
+- Only add this once you have all three — if something's missing, just ask for the missing piece(s) instead of guessing or leaving a field blank in the marker.
+- This marker is invisible to the customer (stripped before sending) — never mention it. Your visible reply should be a warm, human confirmation.
+  - Example — customer: "Yes I want to order. Name: Kasun Perera, phone 0771234567, address 45 Galle Road Colombo 03" → Reply: "Wonderful, thank you Kasun! We've got your details and our team will be in touch shortly to confirm your order.\n[[ORDER_INFO: name=\"Kasun Perera\" | phone=\"0771234567\" | address=\"45 Galle Road Colombo 03\"]]"`;
+
+const CLOSING_QUESTIONS = {
+  "Sinhala script": "ඔබට මෙය ඕඩර් කරන්න කැමතිද?",
+  "Singlish (romanized Sinhala, mixed with English)": "Order karana kamathi dha?",
+  English: "Would you like to place the order?",
+};
+
+/** Picks the closing-offer follow-up question in the customer's language,
+ * based on the same deterministic detector used for the main reply — kept
+ * as a fixed template (not model-generated) so the exact wording the
+ * business wants is guaranteed, and generated separately from the main
+ * reply so it can be sent as its own delayed message. */
+function getClosingQuestion(history) {
+  const lastUserMsg = [...history].reverse().find((m) => m.role === "user");
+  const style = detectLanguageStyle(
+    typeof lastUserMsg?.content === "string" ? lastUserMsg.content : ""
+  );
+  return CLOSING_QUESTIONS[style] || CLOSING_QUESTIONS.English;
+}
+
+/** Strips all structured markers ([[ESCALATE]], [[OFFER_CLOSE]],
+ * [[ORDER_INFO: ...]]) from a raw model reply and reports what was found,
+ * so the caller can act on each signal without any of them ever reaching
+ * the customer. */
+function extractMarkers(rawText) {
+  let text = rawText;
+  let escalated = false;
+  let offerClose = false;
+  let orderInfo = null;
+
+  if (text.includes("[[ESCALATE]]")) {
+    escalated = true;
+    text = text.split("[[ESCALATE]]").join("");
+  }
+
+  if (text.includes("[[OFFER_CLOSE]]")) {
+    offerClose = true;
+    text = text.split("[[OFFER_CLOSE]]").join("");
+  }
+
+  const orderMatch = text.match(
+    /\[\[ORDER_INFO:\s*name="([^"]*)"\s*\|\s*phone="([^"]*)"\s*\|\s*address="([^"]*)"\s*\]\]/i
+  );
+  if (orderMatch) {
+    orderInfo = { name: orderMatch[1], phone: orderMatch[2], address: orderMatch[3] };
+    text = text.replace(orderMatch[0], "");
+  }
+
+  return { text: text.trim(), escalated, offerClose, orderInfo };
 }
 
 function buildProductContextBlock(productContext) {
@@ -175,7 +233,7 @@ async function generateReply({ history, productContext }) {
     max_tokens: 400,
   });
 
-  return extractEscalation(completion.choices[0]?.message?.content?.trim() || "");
+  return extractMarkers(completion.choices[0]?.message?.content?.trim() || "");
 }
 
 /**
@@ -206,7 +264,7 @@ async function generateReplyWithTools({ history }) {
     if (!message) return { text: "", escalated: false };
 
     if (!message.tool_calls || message.tool_calls.length === 0) {
-      return extractEscalation((message.content || "").trim());
+      return extractMarkers((message.content || "").trim());
     }
 
     // Model wants to call one or more tools — execute them and feed results back.
@@ -243,7 +301,7 @@ async function generateReplyWithTools({ history }) {
     temperature: 0.3,
     max_tokens: 400,
   });
-  return extractEscalation(fallback.choices[0]?.message?.content?.trim() || "");
+  return extractMarkers(fallback.choices[0]?.message?.content?.trim() || "");
 }
 
-module.exports = { generateReply, generateReplyWithTools };
+module.exports = { generateReply, generateReplyWithTools, getClosingQuestion };
