@@ -123,18 +123,20 @@ async function handleMessengerEvent(pageId, event) {
 
   // Ad-triggered conversations get fast, pre-loaded product context.
   // Everything else gets live Kapruka MCP tools (search, delivery, order tracking).
-  let reply;
+  let result;
   if (adId) {
     const productContext = await googleSheets.getProductContextByAdId(adId);
-    reply = await openai.generateReply({
+    result = await openai.generateReply({
       history: conversationStore.getHistory(psid),
       productContext,
     });
   } else {
-    reply = await openai.generateReplyWithTools({
+    result = await openai.generateReplyWithTools({
       history: conversationStore.getHistory(psid),
     });
   }
+
+  const { text: reply, escalated } = result;
 
   if (!reply) {
     console.warn("[openai] Empty reply generated for", psid);
@@ -143,7 +145,9 @@ async function handleMessengerEvent(pageId, event) {
 
   conversationStore.addTurn(psid, "assistant", reply);
 
-  console.log(`[messenger] Replying to ${psid}: ${reply}`);
+  console.log(
+    `[messenger] Replying to ${psid}: ${reply}${escalated ? " [ESCALATED]" : ""}`
+  );
 
   await meta.sendMessengerText(pageId, psid, reply);
 
@@ -154,8 +158,15 @@ async function handleMessengerEvent(pageId, event) {
       adId,
       direction: "Outgoing",
       messageText: reply,
+      escalated: escalated ? "Yes" : "No",
     })
     .catch((err) => console.error("[sheets] Failed to log outgoing message:", err));
+
+  if (escalated) {
+    await googleSheets
+      .markCustomerEscalated(psid)
+      .catch((err) => console.error("[sheets] Failed to mark customer escalated:", err));
+  }
 }
 
 // ---------------------------------------------------------------------------

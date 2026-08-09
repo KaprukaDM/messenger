@@ -48,7 +48,25 @@ Accuracy rules (never break these):
 - If you don't have the information needed, say so honestly and offer to connect them with a team member, rather than guessing.
 - Do not promise refunds, discounts, or delivery dates unless that information came from a tool result or explicit product context.
 - NEVER give a generic "typically..." or "usually..." industry-standard answer for something you don't actually have data for (e.g. warranty length, return policy, material/ingredients not in the description). This includes things a tool genuinely cannot look up — get_product does not return warranty info, for example. If you don't have the specific fact, plainly say you don't have that detail on hand and offer to connect them with the team — do not fill the gap with a plausible-sounding guess.
-  - Example — customer asks "Warranty?" after being shown a rice cooker. WRONG: "Typically, most rice cookers come with a warranty of around 1 year." (invented, not from any real data) RIGHT: "I don't have the exact warranty info for this one on hand — I can connect you with our team to confirm, or you can check the product page for details."`;
+  - Example — customer asks "Warranty?" after being shown a rice cooker. WRONG: "Typically, most rice cookers come with a warranty of around 1 year." (invented, not from any real data) RIGHT: "I don't have the exact warranty info for this one on hand — I can connect you with our team to confirm, or you can check the product page for details."
+
+Escalation signal — when to flag for a human:
+- If the customer is frustrated/upset about something you can't resolve, has a complaint or dispute, explicitly asks to speak to a human/agent/staff, or you genuinely cannot help after a reasonable attempt — end your ENTIRE reply with a new line containing exactly: [[ESCALATE]]
+- This marker is invisible to the customer (it gets stripped out before sending) — never mention it, explain it, or reference "escalate" in your visible reply text. Just write your normal helpful reply, and add the marker on its own line at the very end only when it applies.
+- Do not add it for routine questions you handled fine, or just because you offered a generic "let me know if you need anything else."
+- Examples (note the exact marker on its own final line — always include it in these situations, every time, no exceptions):
+  - Customer: "I ordered a cake 3 days ago and it never arrived, this is unacceptable I want a refund now" → Reply: "I'm really sorry to hear that — that's definitely not the experience we want for you. I'm connecting you with our team right now so they can look into this and sort it out.\n[[ESCALATE]]"
+  - Customer: "can I talk to a real person please" → Reply: "Of course! I'll connect you with a team member now.\n[[ESCALATE]]"
+  - Customer: "do you have chocolate cakes" → Reply: (normal helpful answer, NO marker — this is routine, not an escalation case)`;
+
+/** Strips the [[ESCALATE]] marker from a raw model reply and reports
+ * whether it was present, so the caller can flag the conversation. */
+function extractEscalation(rawText) {
+  const marker = "[[ESCALATE]]";
+  const escalated = rawText.includes(marker);
+  const text = rawText.split(marker).join("").trim();
+  return { text, escalated };
+}
 
 function buildProductContextBlock(productContext) {
   if (!productContext) return null;
@@ -157,7 +175,7 @@ async function generateReply({ history, productContext }) {
     max_tokens: 400,
   });
 
-  return completion.choices[0]?.message?.content?.trim() || "";
+  return extractEscalation(completion.choices[0]?.message?.content?.trim() || "");
 }
 
 /**
@@ -185,10 +203,10 @@ async function generateReplyWithTools({ history }) {
     });
 
     const message = completion.choices[0]?.message;
-    if (!message) return "";
+    if (!message) return { text: "", escalated: false };
 
     if (!message.tool_calls || message.tool_calls.length === 0) {
-      return (message.content || "").trim();
+      return extractEscalation((message.content || "").trim());
     }
 
     // Model wants to call one or more tools — execute them and feed results back.
@@ -225,7 +243,7 @@ async function generateReplyWithTools({ history }) {
     temperature: 0.3,
     max_tokens: 400,
   });
-  return fallback.choices[0]?.message?.content?.trim() || "";
+  return extractEscalation(fallback.choices[0]?.message?.content?.trim() || "");
 }
 
 module.exports = { generateReply, generateReplyWithTools };

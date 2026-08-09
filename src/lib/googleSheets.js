@@ -200,6 +200,23 @@ async function upsertCustomer({ customerId, name, platform, adId }) {
 }
 
 /**
+ * Mark a customer's status as "Escalated" — called after generating a reply
+ * that the AI flagged as needing a human. Only touches the status column.
+ */
+async function markCustomerEscalated(customerId) {
+  const sheets = getClient();
+  const existing = await findCustomerRow(customerId);
+  if (!existing) return; // upsertCustomer should have created the row already
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${TAB_CUSTOMERS}!I${existing.rowNumber}:I${existing.rowNumber}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [["Escalated"]] },
+  });
+}
+
+/**
  * Reload the most recent messages for a customer from the Conversations tab.
  * Used to restore chat memory after a server restart (e.g. Render free tier
  * spinning down between messages), since the in-memory conversation buffer
@@ -240,5 +257,6 @@ module.exports = {
   loadAdMapping,
   logMessage,
   upsertCustomer,
+  markCustomerEscalated,
   getRecentHistory,
 };
