@@ -85,7 +85,7 @@ async function appendRow(tabName, values) {
   await sheets.spreadsheets.values.append({
     spreadsheetId: SPREADSHEET_ID,
     range: `${tabName}!A:Z`,
-    valueInputOption: "USER_ENTERED",
+    valueInputOption: "RAW",
     insertDataOption: "INSERT_ROWS",
     requestBody: { values: [values] },
   });
@@ -194,7 +194,7 @@ async function upsertCustomer({ customerId, name, platform, adId }) {
   await sheets.spreadsheets.values.update({
     spreadsheetId: SPREADSHEET_ID,
     range: `${TAB_CUSTOMERS}!A${existing.rowNumber}:J${existing.rowNumber}`,
-    valueInputOption: "USER_ENTERED",
+    valueInputOption: "RAW",
     requestBody: { values: [updated] },
   });
 }
@@ -211,7 +211,7 @@ async function markCustomerEscalated(customerId) {
   await sheets.spreadsheets.values.update({
     spreadsheetId: SPREADSHEET_ID,
     range: `${TAB_CUSTOMERS}!I${existing.rowNumber}:I${existing.rowNumber}`,
-    valueInputOption: "USER_ENTERED",
+    valueInputOption: "RAW",
     requestBody: { values: [["Escalated"]] },
   });
 }
@@ -252,6 +252,48 @@ async function getRecentHistory(customerId, limit = 20) {
   return matches.slice(-limit);
 }
 
+function rowsToObjects(rows) {
+  if (!rows || rows.length < 2) return [];
+  const headers = rows[0].map((h) => String(h).trim());
+  return rows.slice(1).map((row) => {
+    const obj = {};
+    headers.forEach((h, idx) => {
+      obj[h] = row[idx] !== undefined ? row[idx] : "";
+    });
+    return obj;
+  });
+}
+
+/**
+ * List all customers (for the monitoring dashboard), most recently
+ * contacted first.
+ */
+async function listCustomers() {
+  const sheets = getClient();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${TAB_CUSTOMERS}!A:J`,
+  });
+
+  const customers = rowsToObjects(res.data.values || []).filter((c) => c.customer_id);
+  customers.sort((a, b) => (b.last_contact_date || "").localeCompare(a.last_contact_date || ""));
+  return customers;
+}
+
+/**
+ * List the full message thread for one customer, chronological order
+ * (for the monitoring dashboard).
+ */
+async function listMessagesForCustomer(customerId) {
+  const sheets = getClient();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${TAB_CONVERSATIONS}!A:L`,
+  });
+
+  return rowsToObjects(res.data.values || []).filter((m) => m.customer_id === customerId);
+}
+
 module.exports = {
   getProductContextByAdId,
   loadAdMapping,
@@ -259,4 +301,6 @@ module.exports = {
   upsertCustomer,
   markCustomerEscalated,
   getRecentHistory,
+  listCustomers,
+  listMessagesForCustomer,
 };

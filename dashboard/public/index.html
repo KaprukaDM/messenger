@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Chat Monitor — Kapruka Messenger Bot</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h1>Chats</h1>
+        <label class="escalated-toggle">
+          <input type="checkbox" id="escalatedOnly" />
+          Escalated only
+        </label>
+      </div>
+      <input type="text" id="search" placeholder="Search by name or ID..." />
+      <div id="customerList" class="customer-list"></div>
+    </aside>
+
+    <main class="thread">
+      <div id="threadHeader" class="thread-header">Select a conversation</div>
+      <div id="threadMessages" class="thread-messages"></div>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
