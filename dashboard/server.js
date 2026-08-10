@@ -225,13 +225,51 @@ app.get("/api/agent-prompt-history", async (_req, res) => {
   }
 });
 
-// Product/ad list for the Test Bot tab's context picker.
+// Product/ad list — used by the Test Bot tab's context picker and the
+// Product Details tab's configured-ads table.
 app.get("/api/ad-mapping", async (_req, res) => {
   try {
     const map = await googleSheets.loadAdMapping();
     res.json(Array.from(map.values()));
   } catch (err) {
     console.error("[dashboard] Failed to load ad mapping:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Product Details tab: given an ad_id + Kapruka product_code, fetches the
+// product's name/category/price/description/URL from Kapruka and saves (or
+// updates) the Ad_Product_Mapping row in one action.
+app.post("/api/ad-mapping", async (req, res) => {
+  try {
+    const { ad_id, product_code, platform, drive_images_folder_link, notes } = req.body;
+    if (!ad_id || !String(ad_id).trim()) {
+      return res.status(400).json({ error: "ad_id is required" });
+    }
+    if (!product_code || !String(product_code).trim()) {
+      return res.status(400).json({ error: "product_code is required" });
+    }
+
+    const details = await productImagePipeline.resolveKaprukaProductDetails(product_code.trim());
+    if (!details) {
+      return res.status(404).json({ error: `Kapruka product not found for code: ${product_code}` });
+    }
+
+    const saved = await googleSheets.upsertAdMapping({
+      ad_id: ad_id.trim(),
+      platform: platform || "Facebook",
+      product_name: details.name,
+      category: details.category,
+      price_lkr: details.price_lkr,
+      full_description: details.full_description,
+      product_page_url: details.product_page_url,
+      drive_images_folder_link: drive_images_folder_link || "",
+      notes: notes || "",
+      product_code: product_code.trim(),
+    });
+    res.json(saved);
+  } catch (err) {
+    console.error("[dashboard] Failed to fetch+save ad mapping:", err);
     res.status(500).json({ error: err.message });
   }
 });

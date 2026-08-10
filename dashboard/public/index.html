@@ -17,6 +17,7 @@
         <button class="tab-btn active" data-tab="chats">Chats</button>
         <button class="tab-btn" data-tab="escalated">Escalated <span id="escalatedCount" class="tab-count" hidden></span></button>
         <button class="tab-btn" data-tab="orders">Orders</button>
+        <button class="tab-btn" data-tab="products">Product Details</button>
         <button class="tab-btn" data-tab="images">Product Images</button>
         <button class="tab-btn" data-tab="agent">Agent Role</button>
         <button class="tab-btn" data-tab="test">Test Bot</button>
@@ -91,6 +92,51 @@
                 </tr>
               </thead>
               <tbody id="ordersTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Product Details -->
+      <div class="view" id="view-products" hidden>
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Ad &rarr; product mapping</h2>
+            <p class="muted">Enter the Facebook ad ID and Kapruka product code — name, category, price, description, and product URL are fetched from Kapruka automatically and saved to Ad_Product_Mapping.</p>
+          </div>
+          <form id="productForm" class="product-form">
+            <input type="text" id="pfAdId" placeholder="Ad ID (from Ads Manager / referral.ad_id)" required />
+            <input type="text" id="pfProductCode" placeholder="Kapruka product code" required />
+            <select id="pfPlatform">
+              <option value="Facebook">Facebook</option>
+              <option value="Instagram">Instagram</option>
+              <option value="WhatsApp">WhatsApp</option>
+            </select>
+            <input type="text" id="pfDriveLink" placeholder="Drive images folder link (optional)" />
+            <input type="text" id="pfNotes" placeholder="Notes (optional)" />
+            <button type="submit" class="btn btn-primary">Fetch &amp; Save</button>
+          </form>
+          <div id="productFormStatus" class="fetch-status"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Configured ads</h2>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table" id="adMappingTable">
+              <thead>
+                <tr>
+                  <th>Ad ID</th>
+                  <th>Platform</th>
+                  <th>Product Code</th>
+                  <th>Product</th>
+                  <th>Category</th>
+                  <th>Price</th>
+                  <th>Page</th>
+                </tr>
+              </thead>
+              <tbody id="adMappingTableBody"></tbody>
             </table>
           </div>
         </div>

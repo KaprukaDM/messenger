@@ -317,6 +317,23 @@ body {
 }
 .fetch-summary:empty { display: none; }
 
+.product-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.product-form input,
+.product-form select {
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: inherit;
+}
+.product-form input[type="text"] { width: 220px; }
+#productFormStatus { margin-top: 10px; }
+
 .image-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));

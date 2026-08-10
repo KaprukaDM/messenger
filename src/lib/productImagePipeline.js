@@ -47,6 +47,54 @@ async function resolveKaprukaProduct(productCode) {
   return parseKaprukaProduct(retryText);
 }
 
+/**
+ * Fuller parse of the same kapruka_get_product markdown used above, for the
+ * dashboard's Product Details tab — pulls out the fields Ad_Product_Mapping
+ * actually stores (name/category/price/description/url), not just images.
+ */
+function parseKaprukaProductDetails(markdown) {
+  const titleMatch = markdown.match(/^##\s+(.+)$/m);
+  if (!titleMatch) return null;
+
+  const priceMatch = markdown.match(/\*\*Price\*\*:\s*LKR\s*([\d,]+)/);
+  const categoryMatch = markdown.match(/\*\*Category\*\*:\s*(.+)$/m);
+  const urlMatch = markdown.match(/\[View on Kapruka\]\(([^)]+)\)/);
+  const images = Array.from(new Set(markdown.match(IMAGE_URL_RE) || []));
+
+  // The free-text description paragraph sits between the metadata block and
+  // the next "**Variants:**" / "**Image**:" / link section — grab it by
+  // position rather than a named field, since the markdown has no explicit
+  // "Description:" label.
+  const descMatch = markdown.match(/\n\n([^\n#*].+?)(?=\n\n\*\*|\n\n\[View|$)/s);
+
+  return {
+    name: titleMatch[1].trim(),
+    category: categoryMatch ? categoryMatch[1].trim() : "",
+    price_lkr: priceMatch ? priceMatch[1].replace(/,/g, "") : "",
+    full_description: descMatch ? descMatch[1].trim() : "",
+    product_page_url: urlMatch ? urlMatch[1] : "",
+    images,
+  };
+}
+
+/** Same product-ID-or-keyword-search fallback as resolveKaprukaProduct, but
+ * returns the fuller detail set for auto-filling Ad_Product_Mapping. */
+async function resolveKaprukaProductDetails(productCode) {
+  const text = await kaprukaMcp.callTool("kapruka_get_product", { product_id: productCode });
+  const parsed = parseKaprukaProductDetails(text);
+  if (parsed) return parsed;
+
+  const searchText = await kaprukaMcp.callTool("kapruka_search_products", {
+    q: productCode,
+    limit: 1,
+  });
+  const idMatch = searchText.match(/ID:\s*`([^`]+)`/);
+  if (!idMatch) return null;
+
+  const retryText = await kaprukaMcp.callTool("kapruka_get_product", { product_id: idMatch[1] });
+  return parseKaprukaProductDetails(retryText);
+}
+
 function extFromContentType(contentType) {
   if (contentType.includes("png")) return "png";
   if (contentType.includes("webp")) return "webp";
@@ -157,4 +205,10 @@ async function fetchImagesForProduct(productCode) {
   };
 }
 
-module.exports = { fetchImagesForProduct, resolveKaprukaProduct, parseKaprukaProduct };
+module.exports = {
+  fetchImagesForProduct,
+  resolveKaprukaProduct,
+  parseKaprukaProduct,
+  resolveKaprukaProductDetails,
+  parseKaprukaProductDetails,
+};

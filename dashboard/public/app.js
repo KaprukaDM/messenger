@@ -13,6 +13,7 @@ const views = {
   chats: document.getElementById("view-chats"),
   escalated: document.getElementById("view-escalated"),
   orders: document.getElementById("view-orders"),
+  products: document.getElementById("view-products"),
   images: document.getElementById("view-images"),
   agent: document.getElementById("view-agent"),
   test: document.getElementById("view-test"),
@@ -31,6 +32,7 @@ tabButtons.forEach((btn) => {
     if (tab === "test") loadAdOptions();
     if (tab === "escalated") renderEscalatedList();
     if (tab === "orders") fetchOrders();
+    if (tab === "products") fetchAdMappingsTable();
   });
 });
 
@@ -146,6 +148,91 @@ setInterval(() => {
     fetchMessages(selectedCustomerId).then(renderThread);
   }
 }, 15000);
+
+// ---------------------------------------------------------------------------
+// Product Details (Ad -> Product mapping)
+// ---------------------------------------------------------------------------
+const productForm = document.getElementById("productForm");
+const pfAdId = document.getElementById("pfAdId");
+const pfProductCode = document.getElementById("pfProductCode");
+const pfPlatform = document.getElementById("pfPlatform");
+const pfDriveLink = document.getElementById("pfDriveLink");
+const pfNotes = document.getElementById("pfNotes");
+const productFormStatus = document.getElementById("productFormStatus");
+const adMappingTableBody = document.getElementById("adMappingTableBody");
+
+async function fetchAdMappingsTable() {
+  try {
+    const res = await fetch("/api/ad-mapping");
+    const rows = await res.json();
+    renderAdMappingsTable(rows);
+  } catch (err) {
+    adMappingTableBody.innerHTML = `<tr><td colspan="7" class="empty-state">Error loading: ${escapeHtml(err.message)}</td></tr>`;
+  }
+}
+
+function renderAdMappingsTable(rows) {
+  adMappingTableBody.innerHTML = "";
+  if (rows.length === 0) {
+    adMappingTableBody.innerHTML = '<tr><td colspan="7" class="empty-state">No ads configured yet.</td></tr>';
+    return;
+  }
+  for (const r of rows) {
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td>${escapeHtml(r.ad_id || "")}</td>
+      <td>${escapeHtml(r.platform || "")}</td>
+      <td>${escapeHtml(r.product_code || "")}</td>
+      <td>${escapeHtml(r.product_name || "")}</td>
+      <td>${escapeHtml(r.category || "")}</td>
+      <td>${r.price_lkr ? "LKR " + escapeHtml(r.price_lkr) : ""}</td>
+      <td>${r.product_page_url ? `<a href="${escapeHtml(r.product_page_url)}" target="_blank" rel="noopener">View</a>` : ""}</td>
+    `;
+    adMappingTableBody.appendChild(row);
+  }
+}
+
+productForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const ad_id = pfAdId.value.trim();
+  const product_code = pfProductCode.value.trim();
+  if (!ad_id || !product_code) return;
+
+  const submitBtn = productForm.querySelector('button[type="submit"]');
+  submitBtn.disabled = true;
+  productFormStatus.textContent = "Fetching from Kapruka and saving — this can take a few seconds...";
+
+  try {
+    const res = await fetch("/api/ad-mapping", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ad_id,
+        product_code,
+        platform: pfPlatform.value,
+        drive_images_folder_link: pfDriveLink.value.trim(),
+        notes: pfNotes.value.trim(),
+      }),
+    });
+    const saved = await res.json();
+    if (!res.ok) throw new Error(saved.error || "Failed");
+
+    productFormStatus.textContent = `Saved: ${saved.product_name} — LKR ${saved.price_lkr}`;
+    pfAdId.value = "";
+    pfProductCode.value = "";
+    pfDriveLink.value = "";
+    pfNotes.value = "";
+    fetchAdMappingsTable();
+    // The Test Bot's ad picker caches the list on first load — clear that
+    // so it re-fetches and includes this new/updated row next time it's opened.
+    adOptionsLoaded = false;
+    testAdSelect.innerHTML = '<option value="">No ad (organic conversation)</option>';
+  } catch (err) {
+    productFormStatus.textContent = `Error: ${err.message}`;
+  } finally {
+    submitBtn.disabled = false;
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Product Images
@@ -496,6 +583,19 @@ replyForm.addEventListener("submit", async (e) => {
   }
 });
 
+// The Chats poll above (every 15s) keeps `customers` fresh, which is what
+// renderEscalatedList() reads from — but only the Escalated tab's own view
+// needs to actually re-render on that cadence, and re-fetch the open thread
+// in case the bot or a teammate replied elsewhere in the meantime.
+setInterval(() => {
+  if (!views.escalated.hidden) {
+    renderEscalatedList();
+    if (selectedEscalatedId) {
+      fetchMessages(selectedEscalatedId).then(renderEscalatedThread);
+    }
+  }
+}, 15000);
+
 // ---------------------------------------------------------------------------
 // Orders
 // ---------------------------------------------------------------------------
@@ -542,3 +642,7 @@ function renderOrders(orders) {
     });
   });
 }
+
+setInterval(() => {
+  if (!views.orders.hidden) fetchOrders();
+}, 15000);

@@ -5,6 +5,11 @@ const { google } = require("googleapis");
 const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID;
 
 const TAB_AD_MAPPING = "Ad_Product_Mapping";
+const AD_MAPPING_HEADERS = [
+  "ad_id", "platform", "product_name", "category", "price_lkr",
+  "full_description", "product_page_url", "drive_images_folder_link",
+  "notes", "product_code",
+];
 const TAB_CONVERSATIONS = "Conversations";
 const TAB_CUSTOMERS = "Customers";
 const TAB_ORDERS = "Orders";
@@ -92,6 +97,69 @@ async function getProductContextByAdId(adId) {
   if (!adId) return null;
   const map = await loadAdMapping();
   return map.get(String(adId).trim()) || null;
+}
+
+/** Finds an Ad_Product_Mapping row by ad_id. Returns { rowNumber } or null. */
+async function findAdMappingRow(adId) {
+  const sheets = getClient();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${TAB_AD_MAPPING}!A:A`,
+  });
+  const rows = res.data.values || [];
+  const target = String(adId).trim();
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][0] && String(rows[i][0]).trim() === target) {
+      return { rowNumber: i + 1 };
+    }
+  }
+  return null;
+}
+
+/**
+ * Creates or updates one Ad_Product_Mapping row, keyed by ad_id. Used by the
+ * dashboard's Product Details tab to auto-fill product fields from Kapruka
+ * and save them in one action. Returns the saved record.
+ */
+async function upsertAdMapping({
+  ad_id,
+  platform = "",
+  product_name = "",
+  category = "",
+  price_lkr = "",
+  full_description = "",
+  product_page_url = "",
+  drive_images_folder_link = "",
+  notes = "",
+  product_code = "",
+}) {
+  if (!ad_id || !String(ad_id).trim()) {
+    throw new Error("ad_id is required");
+  }
+
+  const values = [
+    String(ad_id).trim(), platform, product_name, category, price_lkr,
+    full_description, product_page_url, drive_images_folder_link, notes, product_code,
+  ];
+
+  const sheets = getClient();
+  const existing = await findAdMappingRow(ad_id);
+  if (existing) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${TAB_AD_MAPPING}!A${existing.rowNumber}:J${existing.rowNumber}`,
+      valueInputOption: "RAW",
+      requestBody: { values: [values] },
+    });
+  } else {
+    await appendRow(TAB_AD_MAPPING, values);
+  }
+
+  await loadAdMapping(true); // refresh the shared cache immediately
+
+  const record = {};
+  AD_MAPPING_HEADERS.forEach((h, idx) => { record[h] = values[idx]; });
+  return record;
 }
 
 async function appendRow(tabName, values) {
@@ -676,6 +744,7 @@ async function listAgentPromptHistory(limit = 20) {
 module.exports = {
   getProductContextByAdId,
   loadAdMapping,
+  upsertAdMapping,
   logMessage,
   upsertCustomer,
   markCustomerEscalated,

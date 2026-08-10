@@ -105,6 +105,12 @@ the ad ID from Ads Manager (or design the ad as a Click-to-Messenger ad and
 check the `referral.ad_id` field in your server logs the first time someone
 clicks it, if you're unsure of the exact ID format).
 
+Instead of filling this row in by hand, use the dashboard's **Product
+Details** tab: enter the ad ID and the Kapruka product code, and it fetches
+the product's name/category/price/description/URL from Kapruka and
+saves/updates that row for you in one action. Editing the same ad ID again
+updates the existing row rather than creating a duplicate.
+
 If no ad context is found for a conversation, the bot still replies — it just
 tells the customer it doesn't have specific product details and offers to
 connect them with the team, rather than guessing.
