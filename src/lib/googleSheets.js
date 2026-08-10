@@ -19,6 +19,8 @@ const IMAGE_REVIEW_HEADERS = [
   "image_url", "drive_file_id", "status",
 ];
 
+const TAB_AGENT_CONFIG = "Agent_Config";
+
 let sheetsClient = null;
 
 function getClient() {
@@ -151,7 +153,7 @@ async function findCustomerRow(customerId) {
   const sheets = getClient();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${TAB_CUSTOMERS}!A:J`,
+    range: `${TAB_CUSTOMERS}!A:K`,
   });
   const rows = res.data.values || [];
   for (let i = 1; i < rows.length; i++) {
@@ -166,7 +168,7 @@ async function findCustomerRow(customerId) {
  * Create or update a Customers row: bumps last_contact_date, total_messages,
  * last_ad_id.
  */
-async function upsertCustomer({ customerId, name, platform, adId }) {
+async function upsertCustomer({ customerId, name, platform, adId, pageId }) {
   const sheets = getClient();
   const today = nowIso().slice(0, 10);
   const existing = await findCustomerRow(customerId);
@@ -183,6 +185,7 @@ async function upsertCustomer({ customerId, name, platform, adId }) {
       1,
       "Active",
       "",
+      pageId || "",
     ]);
     return;
   }
@@ -200,11 +203,12 @@ async function upsertCustomer({ customerId, name, platform, adId }) {
     totalMessages,
     record[8] || "Active",
     record[9] || "",
+    pageId || record[10] || "",
   ];
 
   await sheets.spreadsheets.values.update({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${TAB_CUSTOMERS}!A${existing.rowNumber}:J${existing.rowNumber}`,
+    range: `${TAB_CUSTOMERS}!A${existing.rowNumber}:K${existing.rowNumber}`,
     valueInputOption: "RAW",
     requestBody: { values: [updated] },
   });
@@ -224,6 +228,20 @@ async function markCustomerEscalated(customerId) {
     range: `${TAB_CUSTOMERS}!I${existing.rowNumber}:I${existing.rowNumber}`,
     valueInputOption: "RAW",
     requestBody: { values: [["Escalated"]] },
+  });
+}
+
+/** Marks a customer's status back to "Active" (e.g. after a human resolves the escalation). */
+async function markCustomerResolved(customerId) {
+  const sheets = getClient();
+  const existing = await findCustomerRow(customerId);
+  if (!existing) return;
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${TAB_CUSTOMERS}!I${existing.rowNumber}:I${existing.rowNumber}`,
+    valueInputOption: "RAW",
+    requestBody: { values: [["Active"]] },
   });
 }
 
@@ -275,6 +293,19 @@ function rowsToObjects(rows) {
   });
 }
 
+/** Fetches one customer row as an object (for the dashboard's reply feature). */
+async function getCustomer(customerId) {
+  const existing = await findCustomerRow(customerId);
+  if (!existing) return null;
+  const headers = [
+    "customer_id", "name", "platform", "phone_or_psid", "first_contact_date",
+    "last_contact_date", "last_ad_id", "total_messages", "status", "notes", "page_id",
+  ];
+  const obj = {};
+  headers.forEach((h, idx) => { obj[h] = existing.record[idx] || ""; });
+  return obj;
+}
+
 /**
  * List all customers (for the monitoring dashboard), most recently
  * contacted first.
@@ -283,7 +314,7 @@ async function listCustomers() {
   const sheets = getClient();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${TAB_CUSTOMERS}!A:J`,
+    range: `${TAB_CUSTOMERS}!A:K`,
   });
 
   const customers = rowsToObjects(res.data.values || []).filter((c) => c.customer_id);
@@ -371,6 +402,38 @@ async function logOrder({
     "New",
     notes,
   ]);
+}
+
+/** All orders (for the dashboard's Orders tab), most recent first. */
+async function listOrders() {
+  await ensureOrdersTabExists();
+  const sheets = getClient();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${TAB_ORDERS}!A:K`,
+  });
+  const orders = rowsToObjects(res.data.values || []).filter((o) => o.order_id);
+  orders.sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""));
+  return orders;
+}
+
+/** Updates the status column (New/Fulfilled/Cancelled/...) for one order by ID. */
+async function updateOrderStatus(orderId, status) {
+  const sheets = getClient();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${TAB_ORDERS}!A:K`,
+  });
+  const rows = res.data.values || [];
+  const rowIndex = rows.findIndex((row) => row[0] === orderId);
+  if (rowIndex === -1) throw new Error(`Order not found: ${orderId}`);
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${TAB_ORDERS}!J${rowIndex + 1}:J${rowIndex + 1}`,
+    valueInputOption: "RAW",
+    requestBody: { values: [[status]] },
+  });
 }
 
 let imageReviewTabReady = false;
@@ -470,18 +533,80 @@ async function updateImageReviewStatus(reviewId, status) {
   });
 }
 
+let agentConfigTabReady = false;
+
+/**
+ * Create the Agent_Config tab if it doesn't exist yet. The bot's editable
+ * system prompt is stored in cell A2 (A1 is a header) so the dashboard (a
+ * separate deployment from the bot, with its own filesystem) can save an
+ * edit that the bot picks up live, without a redeploy on either side.
+ */
+async function ensureAgentConfigTabExists() {
+  if (agentConfigTabReady) return;
+
+  const sheets = getClient();
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
+  const exists = (meta.data.sheets || []).some(
+    (s) => s.properties && s.properties.title === TAB_AGENT_CONFIG
+  );
+
+  if (!exists) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: { requests: [{ addSheet: { properties: { title: TAB_AGENT_CONFIG } } }] },
+    });
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${TAB_AGENT_CONFIG}!A1`,
+      valueInputOption: "RAW",
+      requestBody: { values: [["system_prompt"]] },
+    });
+  }
+
+  agentConfigTabReady = true;
+}
+
+/** Returns the saved system prompt, or null if nothing's been saved yet. */
+async function getAgentPrompt() {
+  await ensureAgentConfigTabExists();
+  const sheets = getClient();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${TAB_AGENT_CONFIG}!A2`,
+  });
+  const value = res.data.values && res.data.values[0] && res.data.values[0][0];
+  return value || null;
+}
+
+async function saveAgentPrompt(promptText) {
+  await ensureAgentConfigTabExists();
+  const sheets = getClient();
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${TAB_AGENT_CONFIG}!A2`,
+    valueInputOption: "RAW",
+    requestBody: { values: [[promptText]] },
+  });
+}
+
 module.exports = {
   getProductContextByAdId,
   loadAdMapping,
   logMessage,
   upsertCustomer,
   markCustomerEscalated,
+  markCustomerResolved,
   getRecentHistory,
+  getCustomer,
   listCustomers,
   listMessagesForCustomer,
   logOrder,
+  listOrders,
+  updateOrderStatus,
   addImageReviewRow,
   listImageReviews,
   getImageReview,
   updateImageReviewStatus,
+  getAgentPrompt,
+  saveAgentPrompt,
 };

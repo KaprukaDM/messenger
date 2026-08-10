@@ -4,14 +4,39 @@ const fs = require("fs");
 const path = require("path");
 const OpenAI = require("openai");
 const kaprukaTools = require("./kaprukaTools");
+const googleSheets = require("./googleSheets");
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
-// The bot's persona/rules live in prompts/agent.md, not inline here, so they
-// can be edited as plain prose without touching code.
+// The bot's persona/rules are editable live from the dashboard's Agent Role
+// tab, saved to the Agent_Config sheet — this and the bot are separate
+// deployments with separate filesystems, so Sheets (not a local file) is the
+// shared source of truth. prompts/agent.md is only the starting default,
+// used until someone saves an edit, and as a fallback if Sheets is briefly
+// unreachable.
 const AGENT_PROMPT_PATH = path.join(__dirname, "..", "..", "prompts", "agent.md");
-const BASE_SYSTEM_PROMPT = fs.readFileSync(AGENT_PROMPT_PATH, "utf8");
+const DEFAULT_SYSTEM_PROMPT = fs.readFileSync(AGENT_PROMPT_PATH, "utf8");
+
+let promptCache = DEFAULT_SYSTEM_PROMPT;
+let promptCacheLoadedAt = 0;
+const PROMPT_CACHE_TTL_MS = 60 * 1000;
+
+async function getSystemPrompt() {
+  const now = Date.now();
+  if (now - promptCacheLoadedAt < PROMPT_CACHE_TTL_MS) return promptCache;
+
+  try {
+    const saved = await googleSheets.getAgentPrompt();
+    promptCache = saved || DEFAULT_SYSTEM_PROMPT;
+  } catch (err) {
+    console.error("[openai] Failed to load agent prompt from Sheets, using local default:", err);
+    // Keep serving whatever was cached last rather than falling back to the
+    // bundled default on a transient Sheets error mid-conversation.
+  }
+  promptCacheLoadedAt = now;
+  return promptCache;
+}
 
 const CLOSING_QUESTIONS = {
   "Sinhala script": "ඔබට මෙය ඕඩර් කරන්න කැමතිද?",
@@ -163,10 +188,11 @@ Always call the relevant tool rather than answering from memory. If a tool retur
  * the question, since tool_choice is "auto".
  */
 async function generateReply({ history, productContext }) {
+  const basePrompt = await getSystemPrompt();
   const contextBlock = productContext
     ? `${buildProductContextBlock(productContext)}\n\n${AD_CONTEXT_TOOLS_NOTE}`
     : ORGANIC_CONTEXT_BLOCK;
-  const systemPrompt = `${BASE_SYSTEM_PROMPT}\n\n${contextBlock}\n\n${TOOLS_AVAILABLE_BLOCK}`;
+  const systemPrompt = `${basePrompt}\n\n${contextBlock}\n\n${TOOLS_AVAILABLE_BLOCK}`;
   const messages = [{ role: "system", content: systemPrompt }, ...history];
   const languageReminder = buildLanguageReminder(history);
 

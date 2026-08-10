@@ -114,6 +114,7 @@ async function handleMessengerEvent(pageId, event) {
       name: customerName,
       platform: "Facebook",
       adId,
+      pageId,
     }),
   ]).catch((err) => console.error("[sheets] Failed to log incoming message:", err));
 

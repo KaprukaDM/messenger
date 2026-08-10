@@ -2,44 +2,167 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Chat Monitor — Kapruka Messenger Bot</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kapruka Bot Console</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <nav class="tabnav">
-    <button class="tab-btn active" data-tab="chats">Chats</button>
-    <button class="tab-btn" data-tab="images">Product Images</button>
-  </nav>
-
-  <div class="app" id="view-chats">
-    <aside class="sidebar">
-      <div class="sidebar-header">
-        <h1>Chats</h1>
-        <label class="escalated-toggle">
-          <input type="checkbox" id="escalatedOnly" />
-          Escalated only
-        </label>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">K</span>
+        <span class="brand-name">Kapruka Bot Console</span>
       </div>
-      <input type="text" id="search" placeholder="Search by name or ID..." />
-      <div id="customerList" class="customer-list"></div>
-    </aside>
+      <nav class="tabnav">
+        <button class="tab-btn active" data-tab="chats">Chats</button>
+        <button class="tab-btn" data-tab="escalated">Escalated <span id="escalatedCount" class="tab-count" hidden></span></button>
+        <button class="tab-btn" data-tab="orders">Orders</button>
+        <button class="tab-btn" data-tab="images">Product Images</button>
+        <button class="tab-btn" data-tab="agent">Agent Role</button>
+        <button class="tab-btn" data-tab="test">Test Bot</button>
+      </nav>
+    </header>
 
-    <main class="thread">
-      <div id="threadHeader" class="thread-header">Select a conversation</div>
-      <div id="threadMessages" class="thread-messages"></div>
+    <main class="content">
+      <!-- Chats -->
+      <div class="view" id="view-chats">
+        <div class="app">
+          <aside class="sidebar">
+            <div class="sidebar-header">
+              <h1>Conversations</h1>
+              <label class="escalated-toggle">
+                <input type="checkbox" id="escalatedOnly" />
+                Escalated only
+              </label>
+            </div>
+            <input type="text" id="search" placeholder="Search by name or ID..." />
+            <div id="customerList" class="customer-list"></div>
+          </aside>
+
+          <section class="thread">
+            <div id="threadHeader" class="thread-header">Select a conversation</div>
+            <div id="threadMessages" class="thread-messages"></div>
+          </section>
+        </div>
+      </div>
+
+      <!-- Escalated -->
+      <div class="view" id="view-escalated" hidden>
+        <div class="app">
+          <aside class="sidebar">
+            <div class="sidebar-header">
+              <h1>Escalated conversations</h1>
+            </div>
+            <div id="escalatedList" class="customer-list"></div>
+          </aside>
+
+          <section class="thread">
+            <div id="escalatedThreadHeader" class="thread-header">
+              <span id="escalatedHeaderText">Select a conversation</span>
+              <button id="resolveBtn" class="btn btn-ghost" hidden>Mark Resolved</button>
+            </div>
+            <div id="escalatedMessages" class="thread-messages"></div>
+            <form id="replyForm" class="test-input-row" hidden>
+              <input type="text" id="replyInput" placeholder="Reply as a human team member..." autocomplete="off" />
+              <button type="submit" class="btn btn-primary">Send</button>
+            </form>
+          </section>
+        </div>
+      </div>
+
+      <!-- Orders -->
+      <div class="view" id="view-orders" hidden>
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Orders</h2>
+            <p class="muted">Captured from ad-driven conversations where the customer gave name, phone, and address — for your team to fulfill manually.</p>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table" id="ordersTable">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Product</th>
+                  <th>Customer</th>
+                  <th>Phone</th>
+                  <th>Address</th>
+                  <th>Ad</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="ordersTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Product Images -->
+      <div class="view" id="view-images" hidden>
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Fetch product images</h2>
+            <p class="muted">Pulls the official Kapruka photo automatically, and searches Daraz for customer review photos to approve.</p>
+          </div>
+          <div class="images-toolbar">
+            <input type="text" id="productCodeInput" placeholder="Kapruka product code (= ad name)" />
+            <button id="fetchImagesBtn" class="btn btn-primary">Fetch Images</button>
+            <span id="fetchStatus" class="fetch-status"></span>
+          </div>
+          <div id="fetchSummary" class="fetch-summary"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Pending review</h2>
+            <p class="muted">Daraz customer photos, staged here until you approve or reject them.</p>
+          </div>
+          <div id="pendingGrid" class="image-grid"></div>
+        </div>
+      </div>
+
+      <!-- Agent Role -->
+      <div class="view" id="view-agent" hidden>
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Agent role &amp; rules</h2>
+            <p class="muted">This is the bot's entire persona and behavior — tone, language handling, escalation, closing, order capture. Edits take effect for the live bot within about a minute of saving, no redeploy needed.</p>
+          </div>
+          <div class="agent-toolbar">
+            <button id="agentReloadBtn" class="btn btn-ghost">Reload</button>
+            <button id="agentSaveBtn" class="btn btn-primary">Save</button>
+            <span id="agentStatus" class="fetch-status"></span>
+          </div>
+          <textarea id="agentPromptEditor" class="agent-editor" spellcheck="false"></textarea>
+        </div>
+      </div>
+
+      <!-- Test Bot -->
+      <div class="view" id="view-test" hidden>
+        <div class="test-layout">
+          <aside class="test-controls panel">
+            <div class="panel-header">
+              <h2>Test conversation</h2>
+              <p class="muted">Runs the real bot logic. Nothing here is logged or sent to a customer.</p>
+            </div>
+            <label class="field-label" for="testAdSelect">Simulate arriving from</label>
+            <select id="testAdSelect">
+              <option value="">No ad (organic conversation)</option>
+            </select>
+            <button id="testResetBtn" class="btn btn-ghost full-width">New conversation</button>
+          </aside>
+
+          <section class="thread test-thread">
+            <div id="testMessages" class="thread-messages">
+              <div class="empty-state">Send a message below to start testing.</div>
+            </div>
+            <form id="testForm" class="test-input-row">
+              <input type="text" id="testInput" placeholder="Type a message as the customer..." autocomplete="off" />
+              <button type="submit" class="btn btn-primary">Send</button>
+            </form>
+          </section>
+        </div>
+      </div>
     </main>
-  </div>
-
-  <div class="images-view" id="view-images" hidden>
-    <div class="images-toolbar">
-      <input type="text" id="productCodeInput" placeholder="Kapruka product code (= ad name)" />
-      <button id="fetchImagesBtn">Fetch Images</button>
-      <span id="fetchStatus" class="fetch-status"></span>
-    </div>
-    <div id="fetchSummary" class="fetch-summary"></div>
-
-    <h2 class="section-title">Pending review (Daraz customer photos)</h2>
-    <div id="pendingGrid" class="image-grid"></div>
   </div>
 
   <script src="app.js"></script>

@@ -3,15 +3,21 @@
 const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
 
+const fs = require("fs");
 const express = require("express");
 const googleSheets = require("../src/lib/googleSheets");
 const googleDrive = require("../src/lib/googleDrive");
 const productImagePipeline = require("../src/lib/productImagePipeline");
+const openai = require("../src/lib/openai");
+const meta = require("../src/lib/meta");
+
+const DEFAULT_AGENT_PROMPT_PATH = path.join(__dirname, "..", "prompts", "agent.md");
 
 const app = express();
-// Render assigns the port to bind to via PORT; DASHBOARD_PORT is only used
-// for local dev, where PORT isn't set.
-const PORT = process.env.PORT || process.env.DASHBOARD_PORT || 3001;
+// DASHBOARD_PORT takes priority so local dev doesn't collide with the bot's
+// PORT=3000 (both read the same .env) — falls back to PORT for Render,
+// where this service gets its own PORT independent of the bot's service.
+const PORT = process.env.DASHBOARD_PORT || process.env.PORT || 3001;
 
 const { DASHBOARD_USERNAME, DASHBOARD_PASSWORD } = process.env;
 if (!DASHBOARD_USERNAME || !DASHBOARD_PASSWORD) {
@@ -52,6 +58,73 @@ app.get("/api/customers/:id/messages", async (req, res) => {
     res.json(messages);
   } catch (err) {
     console.error("[dashboard] Failed to list messages:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Sends a message to the customer as a human team member — used from the
+// Escalated tab to actually take over a conversation. Logged as handledBy
+// "Human" so it's visually distinct from bot replies in the thread.
+app.post("/api/customers/:id/reply", async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (typeof text !== "string" || !text.trim()) {
+      return res.status(400).json({ error: "text is required" });
+    }
+
+    const customer = await googleSheets.getCustomer(req.params.id);
+    if (!customer) return res.status(404).json({ error: "Customer not found" });
+    if (!customer.page_id) {
+      return res.status(400).json({ error: "No page_id on record for this customer — can't reply (they messaged before this feature existed)." });
+    }
+
+    await meta.sendMessengerText(customer.page_id, req.params.id, text);
+    await googleSheets.logMessage({
+      platform: customer.platform || "Facebook",
+      customerId: req.params.id,
+      customerName: customer.name,
+      adId: customer.last_ad_id,
+      direction: "Outgoing",
+      messageText: text,
+      handledBy: "Human",
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("[dashboard] Failed to send human reply:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/customers/:id/resolve", async (req, res) => {
+  try {
+    await googleSheets.markCustomerResolved(req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("[dashboard] Failed to resolve customer:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/orders", async (_req, res) => {
+  try {
+    const orders = await googleSheets.listOrders();
+    res.json(orders);
+  } catch (err) {
+    console.error("[dashboard] Failed to list orders:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/orders/:orderId/status", async (req, res) => {
+  try {
+    const { status } = req.body;
+    if (typeof status !== "string" || !status.trim()) {
+      return res.status(400).json({ error: "status is required" });
+    }
+    await googleSheets.updateOrderStatus(req.params.orderId, status);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("[dashboard] Failed to update order status:", err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -107,6 +180,63 @@ app.post("/api/image-review/:reviewId/reject", async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error("[dashboard] Failed to reject image:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// The bot's editable persona/rules. Saved to the Agent_Config sheet (not a
+// local file) so this dashboard and the live bot — separate Render
+// deployments with separate filesystems — share one source of truth.
+app.get("/api/agent-prompt", async (_req, res) => {
+  try {
+    const saved = await googleSheets.getAgentPrompt();
+    const prompt = saved || fs.readFileSync(DEFAULT_AGENT_PROMPT_PATH, "utf8");
+    res.json({ prompt, isSaved: Boolean(saved) });
+  } catch (err) {
+    console.error("[dashboard] Failed to load agent prompt:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/agent-prompt", async (req, res) => {
+  try {
+    const { prompt } = req.body;
+    if (typeof prompt !== "string" || !prompt.trim()) {
+      return res.status(400).json({ error: "prompt is required" });
+    }
+    await googleSheets.saveAgentPrompt(prompt);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("[dashboard] Failed to save agent prompt:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Product/ad list for the Test Bot tab's context picker.
+app.get("/api/ad-mapping", async (_req, res) => {
+  try {
+    const map = await googleSheets.loadAdMapping();
+    res.json(Array.from(map.values()));
+  } catch (err) {
+    console.error("[dashboard] Failed to load ad mapping:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Runs the real bot logic (same generateReply as production) against a
+// scratch conversation — nothing here is logged to Conversations/Customers
+// or sent anywhere, so it's safe to experiment with freely.
+app.post("/api/test-chat", async (req, res) => {
+  try {
+    const { history, adId } = req.body;
+    if (!Array.isArray(history)) {
+      return res.status(400).json({ error: "history array is required" });
+    }
+    const productContext = adId ? await googleSheets.getProductContextByAdId(adId) : null;
+    const result = await openai.generateReply({ history, productContext });
+    res.json(result);
+  } catch (err) {
+    console.error("[dashboard] Failed to run test chat:", err);
     res.status(500).json({ error: err.message });
   }
 });
