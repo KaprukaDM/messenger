@@ -59,7 +59,7 @@ async function loadAdMapping(force = false) {
   const sheets = getClient();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${TAB_AD_MAPPING}!A:I`,
+    range: `${TAB_AD_MAPPING}!A:J`,
   });
 
   const rows = res.data.values || [];
@@ -534,6 +534,22 @@ async function listImageReviews({ status, productCode } = {}) {
   return rows;
 }
 
+/**
+ * Approved photos for a product code, ready to send as Messenger image
+ * attachments. Reconstructs the direct-fetchable URL from drive_file_id
+ * (same pattern the dashboard's review grid already uses) rather than the
+ * stored image_url column, which is a human-clickable Drive "view" link,
+ * not something Facebook's Send API can fetch as raw image bytes.
+ */
+async function getApprovedImages(productCode, limit = 3) {
+  if (!productCode) return [];
+  const rows = await listImageReviews({ status: "Approved", productCode });
+  return rows.slice(0, limit).map((r) => ({
+    driveFileId: r.drive_file_id,
+    url: `https://drive.google.com/uc?export=view&id=${r.drive_file_id}`,
+  }));
+}
+
 /** Fetches a single Image_Review row by ID, or null if not found. */
 async function getImageReview(reviewId) {
   const rows = await listImageReviews();
@@ -676,6 +692,7 @@ module.exports = {
   listImageReviews,
   getImageReview,
   updateImageReviewStatus,
+  getApprovedImages,
   getAgentPrompt,
   saveAgentPrompt,
   listAgentPromptHistory,

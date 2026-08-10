@@ -116,6 +116,36 @@ function buildProductContextBlock(productContext) {
     .join("\n");
 }
 
+const SEND_PHOTOS_TOOL = {
+  type: "function",
+  function: {
+    name: "send_product_photos",
+    description:
+      "Sends the customer 1-3 real photos of this product (official Kapruka photos and/or real customer review photos) directly in the chat. Use this when the customer asks to see photos, more pictures, or what it actually looks like — instead of describing photos in words.",
+    parameters: { type: "object", properties: {} },
+  },
+};
+
+/** Handler for the send_product_photos tool. sendPhotos is provided by the
+ * caller (server.js) and actually delivers the Messenger attachments; when
+ * omitted (e.g. the dashboard's Test Bot playground) the lookup still runs
+ * but nothing is actually sent, so the tool is safe to exercise there. */
+async function runSendPhotosTool({ productContext, sendPhotos }) {
+  const productCode = productContext && productContext.product_code;
+  if (!productCode) {
+    return "No product code available for this conversation — cannot look up photos.";
+  }
+  const images = await googleSheets.getApprovedImages(productCode, 3);
+  if (images.length === 0) {
+    return "No approved photos found for this product yet.";
+  }
+  if (!sendPhotos) {
+    return `(Test mode) Would send ${images.length} photo(s) here.`;
+  }
+  await sendPhotos(images);
+  return `Sent ${images.length} photo(s) to the customer.`;
+}
+
 // Short STEMS (not whole words) matched as plain substrings, specifically
 // because Singlish spelling varies a lot between customers (thiyanawada vs
 // thiyanawadha vs thiyenawa...) — matching a distinctive prefix is far more
@@ -187,7 +217,7 @@ Always call the relevant tool rather than answering from memory. If a tool retur
  * won't need them in the common case where the given context already answers
  * the question, since tool_choice is "auto".
  */
-async function generateReply({ history, productContext }) {
+async function generateReply({ history, productContext, sendPhotos }) {
   const basePrompt = await getSystemPrompt();
   const contextBlock = productContext
     ? `${buildProductContextBlock(productContext)}\n\n${AD_CONTEXT_TOOLS_NOTE}`
@@ -195,6 +225,11 @@ async function generateReply({ history, productContext }) {
   const systemPrompt = `${basePrompt}\n\n${contextBlock}\n\n${TOOLS_AVAILABLE_BLOCK}`;
   const messages = [{ role: "system", content: systemPrompt }, ...history];
   const languageReminder = buildLanguageReminder(history);
+
+  const canSendPhotos = Boolean(productContext && productContext.product_code);
+  const tools = canSendPhotos
+    ? [...kaprukaTools.TOOL_DEFINITIONS, SEND_PHOTOS_TOOL]
+    : kaprukaTools.TOOL_DEFINITIONS;
 
   const MAX_TOOL_ITERATIONS = 5;
 
@@ -205,7 +240,7 @@ async function generateReply({ history, productContext }) {
       // so it stays the most recent thing the model reads, however much
       // tool-call/result content piles up in between.
       messages: [...messages, languageReminder],
-      tools: kaprukaTools.TOOL_DEFINITIONS,
+      tools,
       tool_choice: "auto",
       temperature: 0.3,
       max_tokens: 800,
@@ -224,8 +259,12 @@ async function generateReply({ history, productContext }) {
     for (const toolCall of message.tool_calls) {
       let resultText;
       try {
-        const args = JSON.parse(toolCall.function.arguments || "{}");
-        resultText = await kaprukaTools.executeTool(toolCall.function.name, args);
+        if (toolCall.function.name === "send_product_photos") {
+          resultText = await runSendPhotosTool({ productContext, sendPhotos });
+        } else {
+          const args = JSON.parse(toolCall.function.arguments || "{}");
+          resultText = await kaprukaTools.executeTool(toolCall.function.name, args);
+        }
       } catch (err) {
         resultText = `Error calling ${toolCall.function.name}: ${err.message}`;
       }

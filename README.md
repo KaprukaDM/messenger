@@ -109,6 +109,11 @@ If no ad context is found for a conversation, the bot still replies — it just
 tells the customer it doesn't have specific product details and offers to
 connect them with the team, rather than guessing.
 
+Fill in the `product_code` column on that same row (matching the code used in
+the **Product image pipeline** below) so the bot can find that product's
+approved photos and send them for real when a customer asks to see pictures.
+Without it, the bot just won't offer that tool for that ad's conversations.
+
 ## Product image pipeline (dashboard-triggered, not part of the live bot)
 
 Name each ad after its Kapruka product code, and the dashboard's **Product
@@ -127,6 +132,13 @@ Images** tab can build a photo set for it automatically:
    exact match. Approving moves the file into the product's `official` Drive
    folder; rejecting deletes it.
 5. Everything is tracked in a new **Image_Review** sheet tab.
+
+Once photos for a product code are Approved, the live bot can send them for
+real: if the ad's `product_code` (see **Ad → product context** above) has
+Approved rows in Image_Review, the bot has a `send_product_photos` tool it
+can call when a customer asks to see pictures — it sends up to 3 as actual
+Messenger photo attachments, not just a link. Photos still pending review are
+never sent; only Approved ones are eligible.
 
 ### One-time Drive setup
 

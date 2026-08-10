@@ -63,6 +63,42 @@ async function sendMessengerText(pageId, recipientPsid, text) {
 }
 
 /**
+ * Send a single image as a Messenger attachment via the Send API. The URL
+ * must be directly fetchable image bytes (not an HTML "view" page) since
+ * Facebook fetches it server-side.
+ * @param {string} pageId
+ * @param {string} recipientPsid
+ * @param {string} imageUrl
+ */
+async function sendMessengerImage(pageId, recipientPsid, imageUrl) {
+  const token = getPageAccessToken(pageId);
+  if (!token) {
+    throw new Error(`No access token configured for Page ID ${pageId}`);
+  }
+
+  const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/me/messages?access_token=${encodeURIComponent(token)}`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      recipient: { id: recipientPsid },
+      message: {
+        attachment: { type: "image", payload: { url: imageUrl, is_reusable: true } },
+      },
+      messaging_type: "RESPONSE",
+    }),
+  });
+
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(`Messenger image send failed (${res.status}): ${errBody}`);
+  }
+
+  return res.json();
+}
+
+/**
  * Fetch a Messenger user's display name via the Graph API user profile
  * endpoint. Returns null on any failure (missing permission, deleted
  * account, etc.) rather than throwing — a missing name shouldn't break
@@ -92,5 +128,6 @@ module.exports = {
   getPageAccessToken,
   listConfiguredPageIds,
   sendMessengerText,
+  sendMessengerImage,
   getUserProfile,
 };

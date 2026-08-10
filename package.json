@@ -9,7 +9,8 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "dashboard": "node dashboard/server.js",
-    "drive-auth": "node scripts/driveAuth.js"
+    "drive-auth": "node scripts/driveAuth.js",
+    "postinstall": "npx puppeteer browsers install chrome"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

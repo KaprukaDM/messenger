@@ -152,6 +152,11 @@ async function handleMessengerEvent(pageId, event) {
   const result = await openai.generateReply({
     history: conversationStore.getHistory(psid),
     productContext,
+    sendPhotos: async (images) => {
+      for (const img of images) {
+        await meta.sendMessengerImage(pageId, psid, img.url);
+      }
+    },
   });
 
   const { text: reply, escalated, offerClose, orderInfo } = result;
