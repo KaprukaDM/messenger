@@ -6,7 +6,12 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div class="app">
+  <nav class="tabnav">
+    <button class="tab-btn active" data-tab="chats">Chats</button>
+    <button class="tab-btn" data-tab="images">Product Images</button>
+  </nav>
+
+  <div class="app" id="view-chats">
     <aside class="sidebar">
       <div class="sidebar-header">
         <h1>Chats</h1>
@@ -23,6 +28,18 @@
       <div id="threadHeader" class="thread-header">Select a conversation</div>
       <div id="threadMessages" class="thread-messages"></div>
     </main>
+  </div>
+
+  <div class="images-view" id="view-images" hidden>
+    <div class="images-toolbar">
+      <input type="text" id="productCodeInput" placeholder="Kapruka product code (= ad name)" />
+      <button id="fetchImagesBtn">Fetch Images</button>
+      <span id="fetchStatus" class="fetch-status"></span>
+    </div>
+    <div id="fetchSummary" class="fetch-summary"></div>
+
+    <h2 class="section-title">Pending review (Daraz customer photos)</h2>
+    <div id="pendingGrid" class="image-grid"></div>
   </div>
 
   <script src="app.js"></script>

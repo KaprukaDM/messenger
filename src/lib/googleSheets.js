@@ -13,6 +13,12 @@ const ORDERS_HEADERS = [
   "product_name", "customer_name", "phone", "address", "status", "notes",
 ];
 
+const TAB_IMAGE_REVIEW = "Image_Review";
+const IMAGE_REVIEW_HEADERS = [
+  "review_id", "timestamp", "product_code", "product_name", "source",
+  "image_url", "drive_file_id", "status",
+];
+
 let sheetsClient = null;
 
 function getClient() {
@@ -367,6 +373,103 @@ async function logOrder({
   ]);
 }
 
+let imageReviewTabReady = false;
+
+/**
+ * Create the Image_Review tab (with headers) if it doesn't exist yet.
+ * Safe to call repeatedly.
+ */
+async function ensureImageReviewTabExists() {
+  if (imageReviewTabReady) return;
+
+  const sheets = getClient();
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
+  const exists = (meta.data.sheets || []).some(
+    (s) => s.properties && s.properties.title === TAB_IMAGE_REVIEW
+  );
+
+  if (!exists) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: { requests: [{ addSheet: { properties: { title: TAB_IMAGE_REVIEW } } }] },
+    });
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${TAB_IMAGE_REVIEW}!A1`,
+      valueInputOption: "RAW",
+      requestBody: { values: [IMAGE_REVIEW_HEADERS] },
+    });
+  }
+
+  imageReviewTabReady = true;
+}
+
+let imageReviewCounter = 0;
+function nextImageReviewId() {
+  imageReviewCounter += 1;
+  return `IMG-${Date.now()}-${imageReviewCounter}`;
+}
+
+/**
+ * Record one candidate image (official Kapruka photo or a scraped Daraz
+ * review photo) awaiting your approve/reject decision in the dashboard.
+ */
+async function addImageReviewRow({ productCode, productName, source, imageUrl, driveFileId }) {
+  await ensureImageReviewTabExists();
+  const reviewId = nextImageReviewId();
+  await appendRow(TAB_IMAGE_REVIEW, [
+    reviewId,
+    nowIso(),
+    productCode,
+    productName || "",
+    source,
+    imageUrl,
+    driveFileId,
+    "Pending",
+  ]);
+  return reviewId;
+}
+
+/** All Image_Review rows, optionally filtered by status and/or product code. */
+async function listImageReviews({ status, productCode } = {}) {
+  await ensureImageReviewTabExists();
+  const sheets = getClient();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${TAB_IMAGE_REVIEW}!A:H`,
+  });
+
+  let rows = rowsToObjects(res.data.values || []).filter((r) => r.review_id);
+  if (status) rows = rows.filter((r) => r.status === status);
+  if (productCode) rows = rows.filter((r) => r.product_code === productCode);
+  return rows;
+}
+
+/** Fetches a single Image_Review row by ID, or null if not found. */
+async function getImageReview(reviewId) {
+  const rows = await listImageReviews();
+  return rows.find((r) => r.review_id === reviewId) || null;
+}
+
+/** Updates the status column (Approved/Rejected) for one review row by ID. */
+async function updateImageReviewStatus(reviewId, status) {
+  const sheets = getClient();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${TAB_IMAGE_REVIEW}!A:H`,
+  });
+  const rows = res.data.values || [];
+  const rowIndex = rows.findIndex((row) => row[0] === reviewId);
+  if (rowIndex === -1) throw new Error(`Image review row not found: ${reviewId}`);
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${TAB_IMAGE_REVIEW}!H${rowIndex + 1}:H${rowIndex + 1}`,
+    valueInputOption: "RAW",
+    requestBody: { values: [[status]] },
+  });
+}
+
 module.exports = {
   getProductContextByAdId,
   loadAdMapping,
@@ -377,4 +480,8 @@ module.exports = {
   listCustomers,
   listMessagesForCustomer,
   logOrder,
+  addImageReviewRow,
+  listImageReviews,
+  getImageReview,
+  updateImageReviewStatus,
 };

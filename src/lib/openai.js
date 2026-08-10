@@ -204,8 +204,11 @@ function buildLanguageReminder(history) {
   };
 }
 
-const NO_TOOLS_FALLBACK_BLOCK =
-  "No specific product/ad context is available for this conversation. If the customer references an ad or product you don't have details for, ask them to clarify which product, or offer to connect them with the team.";
+const ORGANIC_CONTEXT_BLOCK =
+  "This conversation didn't start from a specific ad, so no product is pre-loaded. Use your tools to search the catalog, check delivery, or track an order whenever the customer asks about one.";
+
+const AD_CONTEXT_TOOLS_NOTE =
+  "You already have full details for this ad's product above — don't call kapruka_search_products or kapruka_get_product for it again, and use the flat LKR 400 delivery rate above instead of kapruka_check_delivery for THIS order. Only reach for your tools if the customer asks about a different product, wants to browse other categories, or wants to track an existing order.";
 
 const TOOLS_AVAILABLE_BLOCK = `You have live tools connected to the store's real catalog and order system — use them instead of guessing:
 - kapruka_search_products / kapruka_get_product — to answer any product or catalog question
@@ -216,32 +219,17 @@ const TOOLS_AVAILABLE_BLOCK = `You have live tools connected to the store's real
 Always call the relevant tool rather than answering from memory. If a tool returns no results or an error, say so honestly and offer to connect them with the team.`;
 
 /**
- * Reply using static product context (ad-triggered conversations) — no tools.
+ * Reply for any conversation — ad-triggered (product context pre-loaded) or
+ * organic (nothing known yet). Tools are always available so the bot can
+ * still help if a conversation drifts off the ad's product; the model just
+ * won't need them in the common case where the given context already answers
+ * the question, since tool_choice is "auto".
  */
 async function generateReply({ history, productContext }) {
-  const contextBlock = buildProductContextBlock(productContext) || NO_TOOLS_FALLBACK_BLOCK;
-  const systemPrompt = `${BASE_SYSTEM_PROMPT}\n\n${contextBlock}`;
-
-  const completion = await client.chat.completions.create({
-    model: MODEL,
-    messages: [
-      { role: "system", content: systemPrompt },
-      ...history,
-      buildLanguageReminder(history),
-    ],
-    temperature: 0.3,
-    max_tokens: 400,
-  });
-
-  return extractMarkers(completion.choices[0]?.message?.content?.trim() || "");
-}
-
-/**
- * Reply using live Kapruka MCP tools (organic / non-ad conversations) — the
- * model can search products, check delivery, and track orders.
- */
-async function generateReplyWithTools({ history }) {
-  const systemPrompt = `${BASE_SYSTEM_PROMPT}\n\n${TOOLS_AVAILABLE_BLOCK}`;
+  const contextBlock = productContext
+    ? `${buildProductContextBlock(productContext)}\n\n${AD_CONTEXT_TOOLS_NOTE}`
+    : ORGANIC_CONTEXT_BLOCK;
+  const systemPrompt = `${BASE_SYSTEM_PROMPT}\n\n${contextBlock}\n\n${TOOLS_AVAILABLE_BLOCK}`;
   const messages = [{ role: "system", content: systemPrompt }, ...history];
   const languageReminder = buildLanguageReminder(history);
 
@@ -304,4 +292,4 @@ async function generateReplyWithTools({ history }) {
   return extractMarkers(fallback.choices[0]?.message?.content?.trim() || "");
 }
 
-module.exports = { generateReply, generateReplyWithTools, getClosingQuestion };
+module.exports = { generateReply, getClosingQuestion };

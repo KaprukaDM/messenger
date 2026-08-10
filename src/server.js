@@ -135,21 +135,15 @@ async function handleMessengerEvent(pageId, event) {
   // from before is stale - the conversation has moved on.
   conversationStore.clearPendingClose(psid);
 
-  // Ad-triggered conversations get fast, pre-loaded product context.
-  // Everything else gets live Kapruka MCP tools (search, delivery, order tracking).
-  let result;
-  let productContext = null;
-  if (adId) {
-    productContext = await googleSheets.getProductContextByAdId(adId);
-    result = await openai.generateReply({
-      history: conversationStore.getHistory(psid),
-      productContext,
-    });
-  } else {
-    result = await openai.generateReplyWithTools({
-      history: conversationStore.getHistory(psid),
-    });
-  }
+  // Ad-triggered conversations get pre-loaded product context; either way,
+  // the bot always has live Kapruka MCP tools available (search, delivery,
+  // order tracking) in case the conversation needs something it wasn't
+  // already given.
+  const productContext = adId ? await googleSheets.getProductContextByAdId(adId) : null;
+  const result = await openai.generateReply({
+    history: conversationStore.getHistory(psid),
+    productContext,
+  });
 
   const { text: reply, escalated, offerClose, orderInfo } = result;
 

@@ -22,12 +22,18 @@ WhatsApp is not wired up yet — see "What's not built yet" below.
 
 ```
 src/
-  server.js              Express app: webhook verify + receive, wiring
-  lib/googleSheets.js     Reads Ad_Product_Mapping, writes Conversations/Customers
-  lib/openai.js           Builds the system prompt + calls OpenAI
-  lib/meta.js              Multi-page token lookup + Messenger Send API
-  lib/conversationStore.js In-memory recent-turn history per customer
-.env                      All secrets/config (never commit this)
+  server.js                  Express app: webhook verify + receive, wiring
+  lib/googleSheets.js        Reads Ad_Product_Mapping, writes Conversations/Customers/Orders/Image_Review
+  lib/openai.js               Builds the system prompt + calls OpenAI
+  lib/meta.js                  Multi-page token lookup + Messenger Send API
+  lib/conversationStore.js     In-memory recent-turn history per customer
+  lib/kaprukaMcp.js            Raw client for Kapruka's live MCP server (catalog/delivery/orders)
+  lib/kaprukaTools.js          OpenAI tool definitions wrapping the MCP tools
+  lib/googleDrive.js           Drive folder/upload helper for the product image pipeline
+  lib/darazScraper.js          Puppeteer-based Daraz search + review-photo scraper
+  lib/productImagePipeline.js  Orchestrates Kapruka + Daraz -> Drive -> Image_Review
+dashboard/                  Local-only admin UI (chats monitor + product image review) — not deployed to Render
+.env                       All secrets/config (never commit this)
 Kapruka_Chatbot_Data_Template.xlsx   Original template for the Google Sheet
 ```
 
@@ -102,15 +108,61 @@ If no ad context is found for a conversation, the bot still replies — it just
 tells the customer it doesn't have specific product details and offers to
 connect them with the team, rather than guessing.
 
+## Product image pipeline (dashboard-triggered, not part of the live bot)
+
+Name each ad after its Kapruka product code, and the dashboard's **Product
+Images** tab can build a photo set for it automatically:
+
+1. You click **Fetch Images** for a product code in the dashboard.
+2. It pulls the official product photo straight from Kapruka's own catalog
+   (via the MCP `kapruka_get_product` tool) and uploads it to Drive, auto-approved.
+3. It searches Daraz for the same product by title and, if it finds a
+   confident match, scrapes photos out of the customer reviews section and
+   uploads them to a `pending_review` Drive subfolder.
+4. Daraz photos **do not go live automatically** — they show up in the
+   dashboard's pending grid for you to Approve/Reject, since they're
+   customer-uploaded content with real licensing/ownership questions and the
+   Daraz-side product match is a fuzzy title comparison, not a guaranteed
+   exact match. Approving moves the file into the product's `official` Drive
+   folder; rejecting deletes it.
+5. Everything is tracked in a new **Image_Review** sheet tab.
+
+### One-time Drive setup
+
+Service accounts have no storage quota of their own, and this Google account
+doesn't have Workspace (so no Shared Drives to work around that). Instead,
+Drive uploads authenticate as a **real Google account** via OAuth:
+
+1. Enable the **Google Drive API** on the Sheets project
+   (`messenger-bot-482114`): [console.cloud.google.com/apis/library/drive.googleapis.com](https://console.cloud.google.com/apis/library/drive.googleapis.com)
+2. In that same project, go to **APIs & Services → Credentials → Create
+   Credentials → OAuth client ID**, Application type **Desktop app**. Copy the
+   Client ID and Client Secret into `GOOGLE_OAUTH_CLIENT_ID` /
+   `GOOGLE_OAUTH_CLIENT_SECRET` in `.env`.
+   - If prompted to configure the consent screen first: User type **External**,
+     fill in the required fields, and add your own Google account under
+     **Test users** (this keeps the app in "Testing" mode, which is fine —
+     no Google review needed since only you'll ever sign in).
+3. Run `npm run drive-auth`. It opens a browser consent screen — sign in with
+   the Google account you want images stored in, approve access, then copy
+   the `GOOGLE_OAUTH_REFRESH_TOKEN` line it prints into `.env`.
+4. In Google Drive, create a normal folder (e.g. "Kapruka Product Images")
+   in that account's My Drive, open it, and copy its ID from the URL
+   (`drive.google.com/drive/folders/<THIS PART>`) into `DRIVE_ROOT_FOLDER_ID`.
+
+This pipeline only runs locally via `npm run dashboard` — it's not deployed
+to Render and never runs automatically.
+
 ## What's not built yet
 
 - **WhatsApp** — the webhook already detects WhatsApp payloads
   (`object: "whatsapp_business_account"`) but doesn't process them yet. Needs
   a WhatsApp access token + phone number ID once you have WhatsApp Business
   API set up.
-- **Sending images from the Google Drive folder link** — currently the bot
-  only replies with text and mentions the Drive link exists; it doesn't
-  actually attach/send the images via Messenger yet.
+- **Sending the approved Drive images to customers via Messenger** — the
+  product image pipeline above gets approved photos into Drive, but the bot
+  itself still only mentions the Drive link in text; it doesn't attach the
+  actual images to a Messenger reply yet.
 - **Real human handoff** — the bot is prompted to *offer* to escalate, but
   there's no actual notification to a human agent yet (e.g. Slack alert).
 - **Webhook signature verification** (`X-Hub-Signature-256`) — recommended
