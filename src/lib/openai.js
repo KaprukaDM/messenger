@@ -5,6 +5,7 @@ const path = require("path");
 const OpenAI = require("openai");
 const kaprukaTools = require("./kaprukaTools");
 const googleSheets = require("./googleSheets");
+const productImagePipeline = require("./productImagePipeline");
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
@@ -111,23 +112,57 @@ const SEND_PHOTOS_TOOL = {
   function: {
     name: "send_product_photos",
     description:
-      "Sends the customer 1-3 real photos of this product (official Kapruka photos and/or real customer review photos) directly in the chat. Use this when the customer asks to see photos, more pictures, or what it actually looks like — instead of describing photos in words.",
-    parameters: { type: "object", properties: {} },
+      "Sends the customer 1-3 real photos of a product directly in the chat as actual image attachments. ALWAYS use this instead of describing a photo in words or mentioning any link/URL. If this conversation started from an ad, call it with no arguments to send that product's photos. For any other product — one found via kapruka_search_products or kapruka_get_product — pass its product_id so the right photos get sent.",
+    parameters: {
+      type: "object",
+      properties: {
+        product_id: {
+          type: "string",
+          description:
+            "The Kapruka product ID from a prior search/get_product result. Omit only if sending photos for the ad's pre-loaded product.",
+        },
+      },
+    },
   },
 };
 
 /** Handler for the send_product_photos tool. sendPhotos is provided by the
  * caller (server.js) and actually delivers the Messenger attachments; when
  * omitted (e.g. the dashboard's Test Bot playground) the lookup still runs
- * but nothing is actually sent, so the tool is safe to exercise there. */
-async function runSendPhotosTool({ productContext, sendPhotos }) {
-  const productCode = productContext && productContext.product_code;
-  if (!productCode) {
-    return "No product code available for this conversation — cannot look up photos.";
+ * but nothing is actually sent, so the tool is safe to exercise there.
+ *
+ * Two sources, tried in order:
+ * 1. The ad's pre-loaded product_code, if this is an ad conversation and no
+ *    other product_id was given — uses Approved Image_Review rows (curated,
+ *    can include real customer review photos from the Daraz pipeline).
+ * 2. Any product_id the model supplies (organic/searched products, or an ad
+ *    product with nothing Approved yet) — fetched live from Kapruka's own
+ *    catalog photo(s), which don't need manual review since they're the
+ *    store's own official images, not third-party content. */
+async function runSendPhotosTool({ productContext, sendPhotos, args }) {
+  const explicitProductId = args && args.product_id;
+  const adProductCode = productContext && productContext.product_code;
+
+  let images = [];
+  if (!explicitProductId && adProductCode) {
+    images = await googleSheets.getApprovedImages(adProductCode, 3);
   }
-  const images = await googleSheets.getApprovedImages(productCode, 3);
+
   if (images.length === 0) {
-    return "No approved photos found for this product yet.";
+    const productId = explicitProductId || adProductCode;
+    if (!productId) {
+      return "No product specified — cannot look up photos. Search for the product first, or ask which product they mean.";
+    }
+    try {
+      const product = await productImagePipeline.resolveKaprukaProduct(productId);
+      images = ((product && product.images) || []).slice(0, 3).map((url) => ({ url }));
+    } catch (err) {
+      return `Could not fetch photos for that product: ${err.message}`;
+    }
+  }
+
+  if (images.length === 0) {
+    return "No photos available for this product right now.";
   }
   if (!sendPhotos) {
     return `(Test mode) Would send ${images.length} photo(s) here.`;
@@ -156,6 +191,10 @@ const SINGLISH_STEMS = [
   "danna", "ganna",
   "meka ", "eeka ",
   "nathuwa",
+  "welata", "wenna", // welata (for/to), wenna (for)
+  "kokad", // kokada/kokadha ("which one")
+  "ondao", "onada", // ona da/ondao ("is ... needed/good") — kept as single tokens; "one da"/"ona da" with a space would false-positive on English phrases like "someone dared"
+  " mage ", // mage ("my") — needs both boundaries: bare "mage " would false-positive on "image"/"damage"/"manage"
 ];
 
 function containsSinhalaScript(text) {
@@ -200,7 +239,9 @@ const TOOLS_AVAILABLE_BLOCK = `You have live tools connected to the store's real
 
 Always call the relevant tool rather than answering from memory. If a tool returns no results or an error, say so honestly and offer to connect them with the team.
 
-Tool results sometimes contain raw links (e.g. "[View on Kapruka](...)") — never copy those into your reply. Describe the product/info in your own words instead; the customer never needs to leave this chat.`;
+Tool results sometimes contain raw links (e.g. "[View on Kapruka](...)") — never copy those into your reply. Describe the product/info in your own words instead; the customer never needs to leave this chat.
+
+If the customer wants to see a photo of a product, use send_product_photos with that product's ID (from the "ID:" field in a search/get_product result) — never paste an image URL into your reply, even in markdown image syntax. You will NOT already have the ID if the product was only named in an earlier message (tool results don't carry over between turns) — in that case call kapruka_search_products for it by name FIRST to get a fresh ID, then call send_product_photos with that ID, both in the same turn. Don't tell the customer no photo is available just because you don't have the ID yet — go get it.`;
 
 /**
  * Reply for any conversation — ad-triggered (product context pre-loaded) or
@@ -218,10 +259,7 @@ async function generateReply({ history, productContext, sendPhotos }) {
   const messages = [{ role: "system", content: systemPrompt }, ...history];
   const languageReminder = buildLanguageReminder(history);
 
-  const canSendPhotos = Boolean(productContext && productContext.product_code);
-  const tools = canSendPhotos
-    ? [...kaprukaTools.TOOL_DEFINITIONS, SEND_PHOTOS_TOOL]
-    : kaprukaTools.TOOL_DEFINITIONS;
+  const tools = [...kaprukaTools.TOOL_DEFINITIONS, SEND_PHOTOS_TOOL];
 
   const MAX_TOOL_ITERATIONS = 5;
 
@@ -251,10 +289,10 @@ async function generateReply({ history, productContext, sendPhotos }) {
     for (const toolCall of message.tool_calls) {
       let resultText;
       try {
+        const args = JSON.parse(toolCall.function.arguments || "{}");
         if (toolCall.function.name === "send_product_photos") {
-          resultText = await runSendPhotosTool({ productContext, sendPhotos });
+          resultText = await runSendPhotosTool({ productContext, sendPhotos, args });
         } else {
-          const args = JSON.parse(toolCall.function.arguments || "{}");
           resultText = await kaprukaTools.executeTool(toolCall.function.name, args);
         }
       } catch (err) {
