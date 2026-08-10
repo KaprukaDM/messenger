@@ -91,29 +91,19 @@ function extractMarkers(rawText) {
 function buildProductContextBlock(productContext) {
   if (!productContext) return null;
 
-  const {
-    product_name,
-    category,
-    price_lkr,
-    full_description,
-    product_page_url,
-    drive_images_folder_link,
-  } = productContext;
+  const { product_name, category, price_lkr, full_description } = productContext;
 
+  // Deliberately excludes product_page_url and drive_images_folder_link —
+  // the bot never sends links/URLs to customers (see system prompt); photos
+  // go out as real attachments via the send_product_photos tool instead.
   return [
     "This conversation started from an ad for the following product — use these exact details when answering:",
     `- Product: ${product_name || "N/A"}`,
     `- Category: ${category || "N/A"}`,
     `- Price: ${price_lkr ? `LKR ${price_lkr}` : "N/A"}`,
     `- Description: ${full_description || "N/A"}`,
-    `- Product page: ${product_page_url || "N/A"}`,
     "- Delivery: flat LKR 400 nationwide for this order — use this if the customer asks about delivery cost.",
-    drive_images_folder_link
-      ? `- Additional images are available if the customer asks to see more photos: ${drive_images_folder_link}`
-      : null,
-  ]
-    .filter(Boolean)
-    .join("\n");
+  ].join("\n");
 }
 
 const SEND_PHOTOS_TOOL = {
@@ -208,7 +198,9 @@ const TOOLS_AVAILABLE_BLOCK = `You have live tools connected to the store's real
 - kapruka_list_delivery_cities / kapruka_check_delivery — for delivery questions
 - kapruka_track_order — for order status questions (you'll need the customer's order number)
 
-Always call the relevant tool rather than answering from memory. If a tool returns no results or an error, say so honestly and offer to connect them with the team.`;
+Always call the relevant tool rather than answering from memory. If a tool returns no results or an error, say so honestly and offer to connect them with the team.
+
+Tool results sometimes contain raw links (e.g. "[View on Kapruka](...)") — never copy those into your reply. Describe the product/info in your own words instead; the customer never needs to leave this chat.`;
 
 /**
  * Reply for any conversation — ad-triggered (product context pre-loaded) or
