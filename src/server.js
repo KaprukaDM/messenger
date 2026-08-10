@@ -100,6 +100,7 @@ async function handleMessengerEvent(pageId, event) {
   }
 
   // Log the incoming message + update the customer record.
+  let customerState = { botPaused: false };
   await Promise.all([
     googleSheets.logMessage({
       platform: "Facebook",
@@ -115,7 +116,7 @@ async function handleMessengerEvent(pageId, event) {
       platform: "Facebook",
       adId,
       pageId,
-    }),
+    }).then((state) => { customerState = state || customerState; }),
   ]).catch((err) => console.error("[sheets] Failed to log incoming message:", err));
 
   // Restore memory from the durable log if this process doesn't have it
@@ -135,6 +136,13 @@ async function handleMessengerEvent(pageId, event) {
   // A new message means any pending "would you like to order?" follow-up
   // from before is stale - the conversation has moved on.
   conversationStore.clearPendingClose(psid);
+
+  // A human took over this conversation from the dashboard — stay silent so
+  // the bot doesn't talk over them. Resumes once they mark it resolved.
+  if (customerState.botPaused) {
+    console.log(`[messenger] Bot paused for ${psid} (human handling) — not replying.`);
+    return;
+  }
 
   // Ad-triggered conversations get pre-loaded product context; either way,
   // the bot always has live Kapruka MCP tools available (search, delivery,

@@ -368,6 +368,15 @@ body {
   margin-bottom: 14px;
 }
 
+#agentHistorySelect {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: inherit;
+  background: var(--surface);
+}
+
 .agent-editor {
   width: 100%;
   height: calc(100vh - 320px);

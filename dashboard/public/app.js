@@ -230,8 +230,11 @@ const agentEditor = document.getElementById("agentPromptEditor");
 const agentSaveBtn = document.getElementById("agentSaveBtn");
 const agentReloadBtn = document.getElementById("agentReloadBtn");
 const agentStatusEl = document.getElementById("agentStatus");
+const agentHistorySelect = document.getElementById("agentHistorySelect");
+const agentRestoreBtn = document.getElementById("agentRestoreBtn");
 
 let agentLoaded = false;
+let agentHistory = [];
 
 async function loadAgentPrompt() {
   agentStatusEl.textContent = "Loading...";
@@ -244,7 +247,35 @@ async function loadAgentPrompt() {
   } catch (err) {
     agentStatusEl.textContent = `Error loading: ${err.message}`;
   }
+  loadAgentHistory();
 }
+
+async function loadAgentHistory() {
+  try {
+    const res = await fetch("/api/agent-prompt-history");
+    agentHistory = await res.json();
+    agentHistorySelect.innerHTML = '<option value="">History...</option>';
+    agentHistory.forEach((h, idx) => {
+      const opt = document.createElement("option");
+      opt.value = idx;
+      opt.textContent = h.timestamp;
+      agentHistorySelect.appendChild(opt);
+    });
+  } catch (err) {
+    console.error("Failed to load agent prompt history:", err);
+  }
+}
+
+agentHistorySelect.addEventListener("change", () => {
+  agentRestoreBtn.disabled = agentHistorySelect.value === "";
+});
+
+agentRestoreBtn.addEventListener("click", () => {
+  const idx = agentHistorySelect.value;
+  if (idx === "") return;
+  agentEditor.value = agentHistory[idx].prompt_text;
+  agentStatusEl.textContent = `Loaded version from ${agentHistory[idx].timestamp} — click Save to make it live.`;
+});
 
 agentReloadBtn.addEventListener("click", () => {
   if (agentEditor.value && !confirm("Discard unsaved changes and reload?")) return;
@@ -263,6 +294,7 @@ agentSaveBtn.addEventListener("click", async () => {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Failed to save");
     agentStatusEl.textContent = "Saved — live bot picks this up within about a minute.";
+    loadAgentHistory();
   } catch (err) {
     agentStatusEl.textContent = `Error saving: ${err.message}`;
   } finally {

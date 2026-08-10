@@ -130,6 +130,10 @@
           <div class="agent-toolbar">
             <button id="agentReloadBtn" class="btn btn-ghost">Reload</button>
             <button id="agentSaveBtn" class="btn btn-primary">Save</button>
+            <select id="agentHistorySelect">
+              <option value="">History...</option>
+            </select>
+            <button id="agentRestoreBtn" class="btn btn-ghost" disabled>Load into editor</button>
             <span id="agentStatus" class="fetch-status"></span>
           </div>
           <textarea id="agentPromptEditor" class="agent-editor" spellcheck="false"></textarea>

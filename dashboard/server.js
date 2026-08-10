@@ -88,6 +88,9 @@ app.post("/api/customers/:id/reply", async (req, res) => {
       messageText: text,
       handledBy: "Human",
     });
+    // A human just took over — stop the bot from also auto-replying to this
+    // customer until the conversation is marked resolved.
+    await googleSheets.setBotPaused(req.params.id, true);
     res.json({ ok: true });
   } catch (err) {
     console.error("[dashboard] Failed to send human reply:", err);
@@ -208,6 +211,16 @@ app.post("/api/agent-prompt", async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error("[dashboard] Failed to save agent prompt:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/agent-prompt-history", async (_req, res) => {
+  try {
+    const history = await googleSheets.listAgentPromptHistory(20);
+    res.json(history);
+  } catch (err) {
+    console.error("[dashboard] Failed to load agent prompt history:", err);
     res.status(500).json({ error: err.message });
   }
 });

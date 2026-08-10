@@ -20,6 +20,7 @@ const IMAGE_REVIEW_HEADERS = [
 ];
 
 const TAB_AGENT_CONFIG = "Agent_Config";
+const TAB_AGENT_HISTORY = "Agent_Config_History";
 
 let sheetsClient = null;
 
@@ -153,7 +154,7 @@ async function findCustomerRow(customerId) {
   const sheets = getClient();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${TAB_CUSTOMERS}!A:K`,
+    range: `${TAB_CUSTOMERS}!A:L`,
   });
   const rows = res.data.values || [];
   for (let i = 1; i < rows.length; i++) {
@@ -186,8 +187,9 @@ async function upsertCustomer({ customerId, name, platform, adId, pageId }) {
       "Active",
       "",
       pageId || "",
+      "",
     ]);
-    return;
+    return { botPaused: false };
   }
 
   const record = existing.record;
@@ -204,14 +206,16 @@ async function upsertCustomer({ customerId, name, platform, adId, pageId }) {
     record[8] || "Active",
     record[9] || "",
     pageId || record[10] || "",
+    record[11] || "",
   ];
 
   await sheets.spreadsheets.values.update({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${TAB_CUSTOMERS}!A${existing.rowNumber}:K${existing.rowNumber}`,
+    range: `${TAB_CUSTOMERS}!A${existing.rowNumber}:L${existing.rowNumber}`,
     valueInputOption: "RAW",
     requestBody: { values: [updated] },
   });
+  return { botPaused: record[11] === "Yes" };
 }
 
 /**
@@ -237,11 +241,33 @@ async function markCustomerResolved(customerId) {
   const existing = await findCustomerRow(customerId);
   if (!existing) return;
 
+  // Resolving hands the conversation back to the bot, so clear both the
+  // escalated status and any pause left over from a human reply.
   await sheets.spreadsheets.values.update({
     spreadsheetId: SPREADSHEET_ID,
     range: `${TAB_CUSTOMERS}!I${existing.rowNumber}:I${existing.rowNumber}`,
     valueInputOption: "RAW",
     requestBody: { values: [["Active"]] },
+  });
+  await setBotPaused(customerId, false);
+}
+
+/**
+ * Pauses (or resumes) automatic bot replies for one customer — set when a
+ * human sends a manual reply from the dashboard, so the bot doesn't also
+ * reply to the customer's next message and create a confusing double-reply.
+ * Cleared when the conversation is marked resolved.
+ */
+async function setBotPaused(customerId, paused) {
+  const sheets = getClient();
+  const existing = await findCustomerRow(customerId);
+  if (!existing) return;
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${TAB_CUSTOMERS}!L${existing.rowNumber}:L${existing.rowNumber}`,
+    valueInputOption: "RAW",
+    requestBody: { values: [[paused ? "Yes" : ""]] },
   });
 }
 
@@ -299,7 +325,7 @@ async function getCustomer(customerId) {
   if (!existing) return null;
   const headers = [
     "customer_id", "name", "platform", "phone_or_psid", "first_contact_date",
-    "last_contact_date", "last_ad_id", "total_messages", "status", "notes", "page_id",
+    "last_contact_date", "last_ad_id", "total_messages", "status", "notes", "page_id", "bot_paused",
   ];
   const obj = {};
   headers.forEach((h, idx) => { obj[h] = existing.record[idx] || ""; });
@@ -314,7 +340,7 @@ async function listCustomers() {
   const sheets = getClient();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${TAB_CUSTOMERS}!A:K`,
+    range: `${TAB_CUSTOMERS}!A:L`,
   });
 
   const customers = rowsToObjects(res.data.values || []).filter((c) => c.customer_id);
@@ -587,6 +613,48 @@ async function saveAgentPrompt(promptText) {
     valueInputOption: "RAW",
     requestBody: { values: [[promptText]] },
   });
+  await ensureAgentHistoryTabExists();
+  await appendRow(TAB_AGENT_HISTORY, [nowIso(), promptText]);
+}
+
+let agentHistoryTabReady = false;
+
+async function ensureAgentHistoryTabExists() {
+  if (agentHistoryTabReady) return;
+
+  const sheets = getClient();
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
+  const exists = (meta.data.sheets || []).some(
+    (s) => s.properties && s.properties.title === TAB_AGENT_HISTORY
+  );
+
+  if (!exists) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: { requests: [{ addSheet: { properties: { title: TAB_AGENT_HISTORY } } }] },
+    });
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${TAB_AGENT_HISTORY}!A1`,
+      valueInputOption: "RAW",
+      requestBody: { values: [["timestamp", "prompt_text"]] },
+    });
+  }
+
+  agentHistoryTabReady = true;
+}
+
+/** Past saved versions of the agent prompt, most recent first. */
+async function listAgentPromptHistory(limit = 20) {
+  await ensureAgentHistoryTabExists();
+  const sheets = getClient();
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${TAB_AGENT_HISTORY}!A:B`,
+  });
+  const rows = rowsToObjects(res.data.values || []).filter((r) => r.timestamp);
+  rows.reverse();
+  return rows.slice(0, limit);
 }
 
 module.exports = {
@@ -596,6 +664,7 @@ module.exports = {
   upsertCustomer,
   markCustomerEscalated,
   markCustomerResolved,
+  setBotPaused,
   getRecentHistory,
   getCustomer,
   listCustomers,
@@ -609,4 +678,5 @@ module.exports = {
   updateImageReviewStatus,
   getAgentPrompt,
   saveAgentPrompt,
+  listAgentPromptHistory,
 };
