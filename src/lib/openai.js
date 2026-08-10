@@ -10,6 +10,12 @@ const productImagePipeline = require("./productImagePipeline");
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
+// GPT-5.x/o-series models default to reasoning mode and reject unrelated
+// params they don't know about (e.g. gpt-4o 400s on an unrecognized
+// reasoning_effort) — only send it to models that actually support it.
+const MODEL_SUPPORTS_REASONING_EFFORT = /^(gpt-5|o[1-9])/.test(MODEL);
+const REASONING_EFFORT_PARAM = MODEL_SUPPORTS_REASONING_EFFORT ? { reasoning_effort: "none" } : {};
+
 // The bot's persona/rules are editable live from the dashboard's Agent Role
 // tab, saved to the Agent_Config sheet — this and the bot are separate
 // deployments with separate filesystems, so Sheets (not a local file) is the
@@ -112,7 +118,7 @@ const SEND_PHOTOS_TOOL = {
   function: {
     name: "send_product_photos",
     description:
-      "Sends the customer 1-3 real photos of a product directly in the chat as actual image attachments. ALWAYS use this instead of describing a photo in words or mentioning any link/URL. If this conversation started from an ad, call it with no arguments to send that product's photos. For any other product — one found via kapruka_search_products or kapruka_get_product — pass its product_id so the right photos get sent.",
+      "Sends the customer 1-3 real photos of ONE product directly in the chat as actual image attachments. ALWAYS use this instead of describing a photo in words or mentioning any link/URL. If this conversation started from an ad, call it with no arguments to send that product's photos. For any other product — one found via kapruka_search_products or kapruka_get_product — pass its product_id so the right photos get sent. If the customer wants photos of SEVERAL products (e.g. \"send photos of all of these\", after you listed multiple items), call this tool once PER product, one call per product_id, in the same turn — don't just send photos for one of them.",
     parameters: {
       type: "object",
       properties: {
@@ -144,8 +150,17 @@ async function runSendPhotosTool({ productContext, sendPhotos, args }) {
   const adProductCode = productContext && productContext.product_code;
 
   let images = [];
+  let productMeta = null;
+
   if (!explicitProductId && adProductCode) {
     images = await googleSheets.getApprovedImages(adProductCode, 3);
+    if (images.length > 0) {
+      productMeta = {
+        product_id: adProductCode,
+        product_name: productContext.product_name,
+        price_lkr: productContext.price_lkr,
+      };
+    }
   }
 
   if (images.length === 0) {
@@ -154,8 +169,11 @@ async function runSendPhotosTool({ productContext, sendPhotos, args }) {
       return "No product specified — cannot look up photos. Search for the product first, or ask which product they mean.";
     }
     try {
-      const product = await productImagePipeline.resolveKaprukaProduct(productId);
-      images = ((product && product.images) || []).slice(0, 3).map((url) => ({ url }));
+      const details = await productImagePipeline.resolveKaprukaProductDetails(productId);
+      images = ((details && details.images) || []).slice(0, 3).map((url) => ({ url }));
+      if (images.length > 0 && details) {
+        productMeta = { product_id: productId, product_name: details.name, price_lkr: details.price_lkr };
+      }
     } catch (err) {
       return `Could not fetch photos for that product: ${err.message}`;
     }
@@ -167,7 +185,7 @@ async function runSendPhotosTool({ productContext, sendPhotos, args }) {
   if (!sendPhotos) {
     return `(Test mode) Would send ${images.length} photo(s) here.`;
   }
-  await sendPhotos(images);
+  await sendPhotos(images, productMeta);
   return `Sent ${images.length} photo(s) to the customer.`;
 }
 
@@ -186,7 +204,9 @@ const SINGLISH_STEMS = [
   "ayubowan",
   "godak",
   "oyata", "oyala", "oyage",
+  " mata ", // mata ("to me") — bare form beyond the "mata one/ona" combos below; boundaried to avoid "automata"
   "mata one", "mata ona",
+  "ewana", "ewanna", // ewana/ewanna ("send")
   "gana kiyad", "gaana kiyad",
   "danna", "ganna",
   "meka ", "eeka ",
@@ -241,7 +261,9 @@ Always call the relevant tool rather than answering from memory. If a tool retur
 
 Tool results sometimes contain raw links (e.g. "[View on Kapruka](...)") — never copy those into your reply. Describe the product/info in your own words instead; the customer never needs to leave this chat.
 
-If the customer wants to see a photo of a product, use send_product_photos with that product's ID (from the "ID:" field in a search/get_product result) — never paste an image URL into your reply, even in markdown image syntax. You will NOT already have the ID if the product was only named in an earlier message (tool results don't carry over between turns) — in that case call kapruka_search_products for it by name FIRST to get a fresh ID, then call send_product_photos with that ID, both in the same turn. Don't tell the customer no photo is available just because you don't have the ID yet — go get it.`;
+If the customer wants to see a photo of a product, use send_product_photos with that product's ID (from the "ID:" field in a search/get_product result) — never paste an image URL into your reply, even in markdown image syntax. You will NOT already have the ID if the product was only named in an earlier message (tool results don't carry over between turns) — in that case call kapruka_search_products for it by name FIRST to get a fresh ID, then call send_product_photos with that ID, both in the same turn. Don't tell the customer no photo is available just because you don't have the ID yet — go get it.
+
+If the customer wants photos of MULTIPLE products (e.g. you just listed several items and they say "send me all the photos" or "photos of these please"), call send_product_photos once per product — one call per product_id — so every one of them actually gets a real photo, not just the first. Example: you listed 3 racks, customer says "yes show me all of them" → call send_product_photos 3 times, once with each rack's product_id, then a single reply like "Here are photos of all three!" covering all of them — don't silently send only one and call it done.`;
 
 /**
  * Reply for any conversation — ad-triggered (product context pre-loaded) or
@@ -250,7 +272,7 @@ If the customer wants to see a photo of a product, use send_product_photos with 
  * won't need them in the common case where the given context already answers
  * the question, since tool_choice is "auto".
  */
-async function generateReply({ history, productContext, sendPhotos }) {
+async function generateReply({ history, productContext, sendPhotos, pinnedProduct }) {
   const basePrompt = await getSystemPrompt();
   const contextBlock = productContext
     ? `${buildProductContextBlock(productContext)}\n\n${AD_CONTEXT_TOOLS_NOTE}`
@@ -259,6 +281,16 @@ async function generateReply({ history, productContext, sendPhotos }) {
   const messages = [{ role: "system", content: systemPrompt }, ...history];
   const languageReminder = buildLanguageReminder(history);
 
+  // Set when the customer's incoming message is a Messenger "swipe reply"
+  // directly on a photo the bot sent earlier — lets the model answer
+  // "how much is this" etc. about that exact product without re-asking.
+  const pinnedProductReminder = pinnedProduct
+    ? {
+        role: "system",
+        content: `The customer's most recent message is a direct reply to a photo you sent earlier, of this exact product — answer about THIS product specifically, don't ask which product they mean:\n- Product: ${pinnedProduct.product_name}\n- Price: LKR ${pinnedProduct.price_lkr}`,
+      }
+    : null;
+
   const tools = [...kaprukaTools.TOOL_DEFINITIONS, SEND_PHOTOS_TOOL];
 
   const MAX_TOOL_ITERATIONS = 5;
@@ -266,14 +298,19 @@ async function generateReply({ history, productContext, sendPhotos }) {
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
     const completion = await client.chat.completions.create({
       model: MODEL,
-      // Reminder is appended fresh each call (not pushed into `messages`)
-      // so it stays the most recent thing the model reads, however much
+      // Reminders are appended fresh each call (not pushed into `messages`)
+      // so they stay the most recent thing the model reads, however much
       // tool-call/result content piles up in between.
-      messages: [...messages, languageReminder],
+      messages: [...messages, pinnedProductReminder, languageReminder].filter(Boolean),
       tools,
       tool_choice: "auto",
       temperature: 0.3,
-      max_tokens: 800,
+      max_completion_tokens: 800,
+      // GPT-5.x models default to reasoning mode, which the Chat Completions
+      // endpoint refuses to combine with function tools — this bot's tool
+      // calling is core to how it works, so reasoning is turned off rather
+      // than migrating to the /v1/responses endpoint.
+      ...REASONING_EFFORT_PARAM,
     });
 
     const message = completion.choices[0]?.message;
@@ -312,14 +349,16 @@ async function generateReply({ history, productContext, sendPhotos }) {
     model: MODEL,
     messages: [
       ...messages,
+      pinnedProductReminder,
       languageReminder,
       {
         role: "system",
         content: "Give your best final answer to the customer now, without calling any more tools.",
       },
-    ],
+    ].filter(Boolean),
     temperature: 0.3,
-    max_tokens: 400,
+    max_completion_tokens: 400,
+    ...REASONING_EFFORT_PARAM,
   });
   return extractMarkers(fallback.choices[0]?.message?.content?.trim() || "");
 }

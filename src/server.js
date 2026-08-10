@@ -89,6 +89,12 @@ async function handleMessengerEvent(pageId, event) {
   const text = event.message && event.message.text;
   if (!text) return;
 
+  // "Swipe reply" on a specific earlier message — if it was a photo we sent,
+  // resolve it back to the product so e.g. "how much is this" answers about
+  // that exact item instead of asking which product they mean.
+  const replyToMid = event.message.reply_to && event.message.reply_to.mid;
+  const pinnedProduct = replyToMid ? conversationStore.getSentPhotoProduct(psid, replyToMid) : null;
+
   console.log(`[messenger] Incoming from ${psid} (page ${pageId})${adId ? ` [ad:${adId}]` : ""}: ${text}`);
 
   // Fetch the customer's real name once per process (cached after that) so
@@ -152,9 +158,13 @@ async function handleMessengerEvent(pageId, event) {
   const result = await openai.generateReply({
     history: conversationStore.getHistory(psid),
     productContext,
-    sendPhotos: async (images) => {
+    pinnedProduct,
+    sendPhotos: async (images, productMeta) => {
       for (const img of images) {
-        await meta.sendMessengerImage(pageId, psid, img.url);
+        const sendResult = await meta.sendMessengerImage(pageId, psid, img.url);
+        if (sendResult && sendResult.message_id && productMeta) {
+          conversationStore.rememberSentPhoto(psid, sendResult.message_id, productMeta);
+        }
       }
     },
   });

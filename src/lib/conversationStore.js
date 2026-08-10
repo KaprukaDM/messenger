@@ -11,9 +11,31 @@ const store = new Map(); // customerId -> { history: [...], adId: string|null }
 
 function getSession(customerId) {
   if (!store.has(customerId)) {
-    store.set(customerId, { history: [], adId: null, name: null, pendingCloseTimeout: null });
+    store.set(customerId, {
+      history: [],
+      adId: null,
+      name: null,
+      pendingCloseTimeout: null,
+      sentPhotos: new Map(), // messenger message_id -> { product_id, product_name, price_lkr }
+    });
   }
   return store.get(customerId);
+}
+
+/** Remembers which product a photo message_id was of, so a later "swipe
+ * reply" to that exact photo can be resolved back to the right product
+ * (e.g. customer replies to a photo asking "how much is this"). In-memory
+ * only — if the server restarts mid-conversation, old photo replies just
+ * won't resolve and the bot falls back to asking which product they mean. */
+function rememberSentPhoto(customerId, messageId, productInfo) {
+  if (!messageId || !productInfo) return;
+  getSession(customerId).sentPhotos.set(messageId, productInfo);
+}
+
+/** Looks up the product a previously-sent photo message_id was of. */
+function getSentPhotoProduct(customerId, messageId) {
+  if (!messageId) return null;
+  return getSession(customerId).sentPhotos.get(messageId) || null;
 }
 
 /** Cancels any pending delayed closing-question follow-up for this customer
@@ -85,4 +107,6 @@ module.exports = {
   getName,
   setPendingClose,
   clearPendingClose,
+  rememberSentPhoto,
+  getSentPhotoProduct,
 };

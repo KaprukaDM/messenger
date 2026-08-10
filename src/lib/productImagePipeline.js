@@ -30,20 +30,49 @@ function parseKaprukaProduct(markdown) {
   };
 }
 
+/**
+ * Kapruka's search sometimes returns zero results for a long, exact product
+ * name (e.g. "Ikea Rinnig Kitchen Utensil Rack" -> nothing) even though a
+ * shorter slice of the same name matches fine ("Ikea Rinnig" -> the exact
+ * product). Retries with progressively shorter word-prefixes before giving
+ * up, since callers (the model re-searching a product it only knows by its
+ * full name from earlier context) can't be relied on to always guess a
+ * shorter query themselves.
+ */
+async function findProductIdByName(query) {
+  const words = query.trim().split(/\s+/);
+  const attempts = [query];
+  if (words.length > 3) attempts.push(words.slice(0, 3).join(" "));
+  if (words.length > 2) attempts.push(words.slice(0, 2).join(" "));
+
+  for (const q of attempts) {
+    // limit: 1 is unreliable on Kapruka's search — it silently returns zero
+    // results for queries that limit: 3+ resolves fine (verified empirically,
+    // not just theorized) — so ask for a few instead of just the top one.
+    const searchText = await kaprukaMcp.callTool("kapruka_search_products", { q, limit: 3 });
+    const entries = [...searchText.matchAll(/\*\*\d+\.\s+(.+?)\*\*\s*\n\s*ID:\s*`([^`]+)`/g)];
+    if (entries.length === 0) continue;
+
+    // Kapruka's relevance ranking doesn't always put an exact name match
+    // first (e.g. "Kitchen Rack" ranked below "Ikea Rinnig Kitchen Utensil
+    // Rack") — prefer an exact (case-insensitive) title match if one is
+    // present among the results, rather than blindly taking the top hit.
+    const exact = entries.find(([, title]) => title.trim().toLowerCase() === query.trim().toLowerCase());
+    return (exact || entries[0])[2];
+  }
+  return null;
+}
+
 async function resolveKaprukaProduct(productCode) {
   const text = await kaprukaMcp.callTool("kapruka_get_product", { product_id: productCode });
   const parsed = parseKaprukaProduct(text);
   if (parsed) return parsed;
 
   // Product ID didn't resolve directly — fall back to a keyword search.
-  const searchText = await kaprukaMcp.callTool("kapruka_search_products", {
-    q: productCode,
-    limit: 1,
-  });
-  const idMatch = searchText.match(/ID:\s*`([^`]+)`/);
-  if (!idMatch) return null;
+  const productId = await findProductIdByName(productCode);
+  if (!productId) return null;
 
-  const retryText = await kaprukaMcp.callTool("kapruka_get_product", { product_id: idMatch[1] });
+  const retryText = await kaprukaMcp.callTool("kapruka_get_product", { product_id: productId });
   return parseKaprukaProduct(retryText);
 }
 
@@ -84,14 +113,10 @@ async function resolveKaprukaProductDetails(productCode) {
   const parsed = parseKaprukaProductDetails(text);
   if (parsed) return parsed;
 
-  const searchText = await kaprukaMcp.callTool("kapruka_search_products", {
-    q: productCode,
-    limit: 1,
-  });
-  const idMatch = searchText.match(/ID:\s*`([^`]+)`/);
-  if (!idMatch) return null;
+  const productId = await findProductIdByName(productCode);
+  if (!productId) return null;
 
-  const retryText = await kaprukaMcp.callTool("kapruka_get_product", { product_id: idMatch[1] });
+  const retryText = await kaprukaMcp.callTool("kapruka_get_product", { product_id: productId });
   return parseKaprukaProductDetails(retryText);
 }
 
