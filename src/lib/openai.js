@@ -57,10 +57,7 @@ const CLOSING_QUESTIONS = {
  * business wants is guaranteed, and generated separately from the main
  * reply so it can be sent as its own delayed message. */
 function getClosingQuestion(history) {
-  const lastUserMsg = [...history].reverse().find((m) => m.role === "user");
-  const style = detectLanguageStyle(
-    typeof lastUserMsg?.content === "string" ? lastUserMsg.content : ""
-  );
+  const style = detectLanguageStyle(history);
   return CLOSING_QUESTIONS[style] || CLOSING_QUESTIONS.English;
 }
 
@@ -221,24 +218,55 @@ function containsSinhalaScript(text) {
   return /[඀-෿]/.test(text);
 }
 
-/** Lightweight, deterministic language detector — not perfect, but far more
- * reliable than hoping the model infers style correctly from a prompt that's
- * also full of Singlish examples (which was biasing it toward Singlish even
- * for plain English messages). Substring matching on short stems, not exact
- * words, so it tolerates the spelling variation Singlish actually has. */
-function detectLanguageStyle(text) {
-  if (!text) return "English";
+/** Returns a CONFIDENT style for this one message, or null if there's no
+ * clear signal either way (e.g. Sinhala script, or a known Singlish stem).
+ * Substring matching on short stems, not exact words, so it tolerates the
+ * spelling variation Singlish actually has — but this list can never be
+ * complete (Sinhala romanization has no fixed spelling), which is exactly
+ * why callers must NOT treat "no stem matched" as "confidently English". */
+function detectConfidentStyle(text) {
+  if (!text) return null;
   if (containsSinhalaScript(text)) return "Sinhala script";
   const lower = ` ${text.toLowerCase()} `;
   const hasSinglishMarker = SINGLISH_STEMS.some((stem) => lower.includes(stem));
-  return hasSinglishMarker ? "Singlish (romanized Sinhala, mixed with English)" : "English";
+  return hasSinglishMarker ? "Singlish (romanized Sinhala, mixed with English)" : null;
+}
+
+/** Global rule for language matching, not a per-word whitelist: a short
+ * message (≤4 words — "boyfriend?", "yes", "yes please") carries too little
+ * signal to judge on its own, so on ambiguity it inherits whatever style was
+ * last confidently established earlier in the conversation, rather than
+ * hard-resetting to English just because this one fragment happened to
+ * contain no recognized Singlish stem. A longer message with no signal is
+ * trusted as genuinely English (enough words to have shown Singlish if it
+ * were Singlish) — this is what stops the inheritance from ever getting
+ * "stuck" once the customer actually switches to plain English.
+ *
+ * This directly fixes the class of bug where the stem list is missing a
+ * word: a customer who was already in a Singlish conversation and sends a
+ * short ambiguous follow-up no longer gets bounced to English just because
+ * that one fragment doesn't happen to contain a listed stem. */
+function detectLanguageStyle(history) {
+  const userMessages = [...history].reverse().filter((m) => m.role === "user");
+  const [latest, ...earlier] = userMessages;
+  const latestText = typeof latest?.content === "string" ? latest.content : "";
+
+  const confident = detectConfidentStyle(latestText);
+  if (confident) return confident;
+
+  const isShortAndAmbiguous = latestText.trim().split(/\s+/).filter(Boolean).length <= 4;
+  if (isShortAndAmbiguous) {
+    for (const m of earlier) {
+      const priorStyle = detectConfidentStyle(typeof m.content === "string" ? m.content : "");
+      if (priorStyle) return priorStyle;
+    }
+  }
+
+  return "English";
 }
 
 function buildLanguageReminder(history) {
-  const lastUserMsg = [...history].reverse().find((m) => m.role === "user");
-  const style = detectLanguageStyle(
-    typeof lastUserMsg?.content === "string" ? lastUserMsg.content : ""
-  );
+  const style = detectLanguageStyle(history);
   return {
     role: "system",
     content: `Reminder: the customer's most recent message is in ${style}. Your reply MUST be in ${style} to match them — regardless of what language any product data or tool results are in.`,
