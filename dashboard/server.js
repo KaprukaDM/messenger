@@ -9,8 +9,30 @@ const googleDrive = require("../src/lib/googleDrive");
 const productImagePipeline = require("../src/lib/productImagePipeline");
 
 const app = express();
-const PORT = process.env.DASHBOARD_PORT || 3001;
+// Render assigns the port to bind to via PORT; DASHBOARD_PORT is only used
+// for local dev, where PORT isn't set.
+const PORT = process.env.PORT || process.env.DASHBOARD_PORT || 3001;
 
+const { DASHBOARD_USERNAME, DASHBOARD_PASSWORD } = process.env;
+if (!DASHBOARD_USERNAME || !DASHBOARD_PASSWORD) {
+  throw new Error("DASHBOARD_USERNAME and DASHBOARD_PASSWORD must be set in .env before starting the dashboard.");
+}
+
+// This dashboard shows customer names/phones/addresses and can approve
+// product images, so it's gated even for local use — required once this
+// also runs as a public Render service, not just on localhost.
+function requireAuth(req, res, next) {
+  const header = req.headers.authorization || "";
+  const [scheme, encoded] = header.split(" ");
+  if (scheme === "Basic" && encoded) {
+    const [user, pass] = Buffer.from(encoded, "base64").toString("utf8").split(":");
+    if (user === DASHBOARD_USERNAME && pass === DASHBOARD_PASSWORD) return next();
+  }
+  res.set("WWW-Authenticate", 'Basic realm="Kapruka Dashboard"');
+  res.status(401).send("Authentication required");
+}
+
+app.use(requireAuth);
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
@@ -90,6 +112,5 @@ app.post("/api/image-review/:reviewId/reject", async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Dashboard running at http://localhost:${PORT}`);
-  console.log("(Local monitoring tool only — not deployed to Render.)");
+  console.log(`Dashboard listening on port ${PORT}`);
 });

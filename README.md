@@ -32,7 +32,8 @@ src/
   lib/googleDrive.js           Drive folder/upload helper for the product image pipeline
   lib/darazScraper.js          Puppeteer-based Daraz search + review-photo scraper
   lib/productImagePipeline.js  Orchestrates Kapruka + Daraz -> Drive -> Image_Review
-dashboard/                  Local-only admin UI (chats monitor + product image review) — not deployed to Render
+dashboard/                  Admin UI (chats monitor + product image review) — runs locally (`npm run dashboard`) or as its own Render service; password-protected either way
+prompts/agent.md            The bot's persona/tone/rules — plain prose, edit this directly to change behavior
 .env                       All secrets/config (never commit this)
 Kapruka_Chatbot_Data_Template.xlsx   Original template for the Google Sheet
 ```
