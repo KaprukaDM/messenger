@@ -114,12 +114,16 @@ async function getUserProfile(pageId, psid) {
 
   try {
     const res = await fetch(url);
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => "");
+      console.error(`[meta] getUserProfile failed for psid ${psid} (${res.status}): ${errBody}`);
+      return null;
+    }
     const data = await res.json();
     const name = [data.first_name, data.last_name].filter(Boolean).join(" ");
     return name || null;
   } catch (err) {
-    console.error("[meta] Failed to fetch user profile:", err);
+    console.error(`[meta] Failed to fetch user profile for psid ${psid}:`, err);
     return null;
   }
 }
